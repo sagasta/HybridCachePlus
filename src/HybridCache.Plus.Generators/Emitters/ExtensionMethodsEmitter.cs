@@ -81,7 +81,20 @@ public static class ExtensionMethodsEmitter
         var tenantParam = method.Parameters.FirstOrDefault(p =>
             string.Equals(p.Name, "tenantId", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(p.Name, "tenant", StringComparison.OrdinalIgnoreCase));
-        var tenantArg = tenantParam != null ? tenantParam.Name : "null";
+
+        string tenantArg;
+        if (tenantParam != null)
+        {
+            tenantArg = tenantParam.Name;
+        }
+        else
+        {
+            var placeholders = TemplateParser.ExtractPlaceholders(method.KeyTemplate);
+            var tenantPh = placeholders.FirstOrDefault(ph =>
+                ph.IndexOf("tenant", StringComparison.OrdinalIgnoreCase) >= 0 && ph.Contains('.'));
+
+            tenantArg = tenantPh != null ? $"{tenantPh}?.ToString()" : "null";
+        }
 
         sb.AppendLine($"        /// <summary>");
         sb.AppendLine($"        /// Retrieves or creates an entry for {method.MethodName} in HybridCache using compiled typed keys and configurable policy TTLs.");
@@ -223,7 +236,12 @@ public static class ExtensionMethodsEmitter
         foreach (var tag in method.Tags)
         {
             var placeholders = TemplateParser.ExtractPlaceholders(tag);
-            var tagParams = method.Parameters.Where(p => placeholders.Contains(p.Name, StringComparer.OrdinalIgnoreCase)).ToList();
+            var rootParamNames = placeholders
+                .Select(ph => ph.Contains('.') ? ph.Substring(0, ph.IndexOf('.')) : ph)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var tagParams = method.Parameters.Where(p => rootParamNames.Contains(p.Name, StringComparer.OrdinalIgnoreCase)).ToList();
 
             var tagMethodSuffix = BuildTagMethodSuffix(tag, placeholders);
             var tagEvictMethodName = $"Evict{GetBaseMethodName(method.MethodName)}By{tagMethodSuffix}TagAsync";
@@ -275,7 +293,11 @@ public static class ExtensionMethodsEmitter
     {
         if (placeholders.Count > 0)
         {
-            return string.Join("And", placeholders.Select(CapitalizeFirstLetter));
+            return string.Join("And", placeholders.Select(p =>
+            {
+                var clean = p.Replace(".", "");
+                return CapitalizeFirstLetter(clean);
+            }));
         }
 
         var parts = tag.Split([':', '_', '-'], StringSplitOptions.RemoveEmptyEntries);

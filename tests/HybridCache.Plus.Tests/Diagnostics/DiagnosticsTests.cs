@@ -137,19 +137,22 @@ public class DiagnosticsTests
                     if (tag.Key == "cache.key") key = tag.Value?.ToString();
                 }
 
-                evictions.Add((measurement, reason, key));
+                if (key == "tenants:unique_evict_test:products:99")
+                {
+                    evictions.Add((measurement, reason, key));
+                }
             }
         });
 
         listener.Start();
 
         // Act
-        HybridCachePlusDiagnostics.RecordEviction("tenants:t1:products:99", "DecoratorMutation", "t1");
+        HybridCachePlusDiagnostics.RecordEviction("tenants:unique_evict_test:products:99", "DecoratorMutation", "t1");
 
         // Assert
         Assert.Single(evictions);
         Assert.Equal("DecoratorMutation", evictions[0].Reason);
-        Assert.Equal("tenants:t1:products:99", evictions[0].Key);
+        Assert.Equal("tenants:unique_evict_test:products:99", evictions[0].Key);
     }
 
     [Fact]

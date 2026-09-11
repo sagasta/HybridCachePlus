@@ -41,4 +41,13 @@ public static class DiagnosticDescriptors
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
         description: "Multi-tenant methods with a tenant parameter must include the tenant placeholder in their [CacheTemplate] to guarantee L1 cache isolation between tenants.");
+
+    public static readonly DiagnosticDescriptor UnresolvedInvalidationPlaceholder = new(
+        id: "HCP005",
+        title: "Eviction placeholder not found in mutating method parameters",
+        messageFormat: "Eviction placeholder '{{{0}}}' required for method '{1}' could not be resolved from parameters of mutating method '{2}'",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description: "A mutating method referenced in [InvalidatedBy] should provide all placeholders needed to compute the cache key or tag to invalidate.");
 }

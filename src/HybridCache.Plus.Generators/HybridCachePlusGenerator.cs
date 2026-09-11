@@ -241,7 +241,7 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
             var templatePlaceholders = TemplateParser.ExtractPlaceholders(template);
             foreach (var placeholder in templatePlaceholders)
             {
-                if (!paramNames.Contains(placeholder))
+                if (!TryResolvePlaceholder(placeholder, methodSymbol.Parameters, out _))
                 {
                     diagnostics.Add(new DiagnosticInfo(
                         DiagnosticDescriptors.MissingTemplateParameter,
@@ -257,7 +257,7 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                 var tagPlaceholders = TemplateParser.ExtractPlaceholders(tag);
                 foreach (var placeholder in tagPlaceholders)
                 {
-                    if (!paramNames.Contains(placeholder))
+                    if (!TryResolvePlaceholder(placeholder, methodSymbol.Parameters, out _))
                     {
                         diagnostics.Add(new DiagnosticInfo(
                             DiagnosticDescriptors.MissingTemplateParameter,
@@ -268,15 +268,26 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                 }
             }
 
-            // Validate Multi-Tenant Placeholder Isolation (HCP004)
-            var tenantParam = methodSymbol.Parameters.FirstOrDefault(p =>
-                string.Equals(p.Name, "tenantId", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(p.Name, "tenant", StringComparison.OrdinalIgnoreCase));
+            // Resolve Placeholders in Template and Tags (e.g. {tenantId} -> {query.TenantId} if query is an object)
+            var resolvedTemplate = TemplateParser.ReplacePlaceholders(template, ph =>
+                TryResolvePlaceholder(ph, methodSymbol.Parameters, out var res) ? res : null);
 
-            if (tenantParam != null)
+            var resolvedTagsList = tagsList.Select(tag =>
+                TemplateParser.ReplacePlaceholders(tag, ph =>
+                    TryResolvePlaceholder(ph, methodSymbol.Parameters, out var res) ? res : null)).ToList();
+
+            // Validate Multi-Tenant Placeholder Isolation (HCP004)
+            var hasTenantParam = methodSymbol.Parameters.Any(p =>
+                string.Equals(p.Name, "tenantId", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(p.Name, "tenant", StringComparison.OrdinalIgnoreCase) ||
+                (!IsSpecialOrPrimitiveType(p.Type) && GetPublicProperties(p.Type).Any(pr =>
+                    string.Equals(pr.Name, "tenantId", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(pr.Name, "tenant", StringComparison.OrdinalIgnoreCase))));
+
+            if (hasTenantParam)
             {
                 var hasTenantPlaceholder = templatePlaceholders.Any(ph =>
-                    string.Equals(ph, tenantParam.Name, StringComparison.OrdinalIgnoreCase));
+                    ph.IndexOf("tenant", StringComparison.OrdinalIgnoreCase) >= 0);
 
                 if (!hasTenantPlaceholder)
                 {
@@ -284,7 +295,7 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                         DiagnosticDescriptors.TenantPlaceholderMissingInTemplate,
                         methodSymbol.Locations.FirstOrDefault(),
                         methodSymbol.Name,
-                        tenantParam.Name,
+                        "tenantId",
                         template));
                 }
             }
@@ -361,8 +372,8 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                             targetTypeSymbol.Name,
                             targetNs,
                             targetMethodName,
-                            template,
-                            new EquatableArray<string>(tagsList));
+                            resolvedTemplate,
+                            new EquatableArray<string>(resolvedTagsList));
 
                         invalidationTargets.Add(targetModel);
                         pendingInvalidations.Add((targetModel, targetTypeSymbol));
@@ -374,11 +385,11 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                 methodSymbol.Name,
                 returnTypeStr,
                 isValueTask,
-                template,
+                resolvedTemplate,
                 policyName,
                 localTtl,
                 distributedTtl,
-                new EquatableArray<string>(tagsList),
+                new EquatableArray<string>(resolvedTagsList),
                 new EquatableArray<ParameterModel>(parameters),
                 new EquatableArray<InvalidationTargetModel>(invalidationTargets)));
         }
@@ -452,7 +463,14 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
             var evictionActions = new List<EvictionActionModel>();
             foreach (var inv in matchingInvalidations)
             {
-                evictionActions.Add(new EvictionActionModel(inv.KeyTemplate, inv.TagTemplates));
+                var resolvedKey = TemplateParser.ReplacePlaceholders(inv.KeyTemplate, ph =>
+                    TryResolvePlaceholder(ph, method.Parameters, out var res) ? res : null);
+
+                var resolvedTags = inv.TagTemplates.Select(tag =>
+                    TemplateParser.ReplacePlaceholders(tag, ph =>
+                        TryResolvePlaceholder(ph, method.Parameters, out var res) ? res : null)).ToList();
+
+                evictionActions.Add(new EvictionActionModel(resolvedKey, new EquatableArray<string>(resolvedTags)));
             }
 
             // Check direct [InvalidatesTag] attributes on this method
@@ -470,7 +488,9 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                         attr.ConstructorArguments[0].Value is string tag &&
                         !string.IsNullOrWhiteSpace(tag))
                     {
-                        directTags.Add(tag);
+                        var resolvedTag = TemplateParser.ReplacePlaceholders(tag, ph =>
+                            TryResolvePlaceholder(ph, method.Parameters, out var res) ? res : null);
+                        directTags.Add(resolvedTag);
                     }
                 }
                 if (directTags.Count > 0)
@@ -496,6 +516,131 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
             fullName,
             decoratorClassName,
             new EquatableArray<DecoratorMethodModel>(methods));
+    }
+
+    private static bool TryResolvePlaceholder(
+        string placeholder,
+        System.Collections.Immutable.ImmutableArray<IParameterSymbol> methodParameters,
+        out string resolvedExpression)
+    {
+        resolvedExpression = placeholder;
+
+        // 1. If placeholder has a dot, e.g. "query.TenantId" or "command.Product.Id"
+        if (placeholder.Contains('.'))
+        {
+            var parts = placeholder.Split('.');
+            var rootName = parts[0];
+            var param = methodParameters.FirstOrDefault(p =>
+                string.Equals(p.Name, rootName, StringComparison.OrdinalIgnoreCase));
+
+            if (param != null)
+            {
+                ITypeSymbol currentType = param.Type;
+                var valid = true;
+                for (int i = 1; i < parts.Length; i++)
+                {
+                    var propName = parts[i];
+                    var prop = GetPublicProperties(currentType)
+                        .FirstOrDefault(p => string.Equals(p.Name, propName, StringComparison.OrdinalIgnoreCase));
+
+                    if (prop == null)
+                    {
+                        valid = false;
+                        break;
+                    }
+                    currentType = prop.Type;
+                }
+
+                if (valid)
+                {
+                    resolvedExpression = $"{param.Name}.{string.Join(".", parts.Skip(1))}";
+                    return true;
+                }
+            }
+
+            // If rootName didn't match a parameter, search if any object parameter has the leaf property
+            var leafPropName = parts[parts.Length - 1];
+            foreach (var p in methodParameters)
+            {
+                if (IsSpecialOrPrimitiveType(p.Type)) continue;
+
+                var prop = GetPublicProperties(p.Type)
+                    .FirstOrDefault(pr => string.Equals(pr.Name, leafPropName, StringComparison.OrdinalIgnoreCase));
+
+                if (prop != null)
+                {
+                    resolvedExpression = $"{p.Name}.{prop.Name}";
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // 2. Direct parameter match, e.g. "tenantId"
+        var directParam = methodParameters.FirstOrDefault(p =>
+            string.Equals(p.Name, placeholder, StringComparison.OrdinalIgnoreCase));
+
+        if (directParam != null)
+        {
+            resolvedExpression = directParam.Name;
+            return true;
+        }
+
+        // 3. Search inside complex object parameters (e.g. query, command, dto)
+        foreach (var p in methodParameters)
+        {
+            if (IsSpecialOrPrimitiveType(p.Type)) continue;
+
+            var prop = GetPublicProperties(p.Type)
+                .FirstOrDefault(pr => string.Equals(pr.Name, placeholder, StringComparison.OrdinalIgnoreCase));
+
+            if (prop != null)
+            {
+                resolvedExpression = $"{p.Name}.{prop.Name}";
+                return true;
+            }
+
+            // Check common Id aliases (e.g. placeholder is "productId" and prop is "Id")
+            if (placeholder.EndsWith("id", StringComparison.OrdinalIgnoreCase) && placeholder.Length > 2)
+            {
+                var idProp = GetPublicProperties(p.Type)
+                    .FirstOrDefault(pr => string.Equals(pr.Name, "Id", StringComparison.OrdinalIgnoreCase));
+
+                if (idProp != null)
+                {
+                    resolvedExpression = $"{p.Name}.{idProp.Name}";
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsSpecialOrPrimitiveType(ITypeSymbol type)
+    {
+        if (type.ToDisplayString().Contains("CancellationToken")) return true;
+        if (type.SpecialType != SpecialType.None) return true;
+        var display = type.ToDisplayString();
+        if (display is "System.Guid" or "System.DateTime" or "System.DateTimeOffset" or "System.TimeSpan" or "System.Decimal") return true;
+        return false;
+    }
+
+    private static IEnumerable<IPropertySymbol> GetPublicProperties(ITypeSymbol type)
+    {
+        var current = type;
+        while (current != null && current.SpecialType != SpecialType.System_Object)
+        {
+            foreach (var member in current.GetMembers().OfType<IPropertySymbol>())
+            {
+                if (member.DeclaredAccessibility == Accessibility.Public && !member.IsStatic)
+                {
+                    yield return member;
+                }
+            }
+            current = current.BaseType;
+        }
     }
 
     private sealed class InterfaceExtractionResultComparer : IEqualityComparer<InterfaceExtractionResult>

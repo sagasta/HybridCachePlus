@@ -43,4 +43,61 @@ public static class TemplateParser
 
         return placeholders;
     }
+
+    /// <summary>
+    /// Replaces placeholders in a template string with resolved expressions.
+    /// </summary>
+    public static string ReplacePlaceholders(string template, Func<string, string?> resolver)
+    {
+        if (string.IsNullOrWhiteSpace(template)) return template;
+
+        var sb = new System.Text.StringBuilder();
+        var i = 0;
+        while (i < template.Length)
+        {
+            var open = template.IndexOf('{', i);
+            if (open == -1)
+            {
+                sb.Append(template.Substring(i));
+                break;
+            }
+
+            sb.Append(template.Substring(i, open - i));
+            var close = template.IndexOf('}', open + 1);
+            if (close == -1)
+            {
+                sb.Append(template.Substring(open));
+                break;
+            }
+
+            var rawPlaceholder = template.Substring(open + 1, close - open - 1).Trim();
+            var formatSpec = "";
+            var colonIdx = rawPlaceholder.IndexOf(':');
+            var placeholderName = rawPlaceholder;
+            if (colonIdx > 0)
+            {
+                placeholderName = rawPlaceholder.Substring(0, colonIdx).Trim();
+                formatSpec = rawPlaceholder.Substring(colonIdx);
+            }
+
+            var resolved = resolver(placeholderName);
+            if (!string.IsNullOrEmpty(resolved))
+            {
+                sb.Append('{');
+                sb.Append(resolved);
+                sb.Append(formatSpec);
+                sb.Append('}');
+            }
+            else
+            {
+                sb.Append('{');
+                sb.Append(rawPlaceholder);
+                sb.Append('}');
+            }
+
+            i = close + 1;
+        }
+
+        return sb.ToString();
+    }
 }

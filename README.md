@@ -114,6 +114,60 @@ var updatedProduct = await cache.GetProductAsync("tenant_1", 101, factory);
 
 ---
 
+## 🎯 CQRS & Clean Architecture: Commands, Queries & Complex Objects
+
+HybridCache.Plus natively supports complex objects (Records, Classes, DTOs) in both reader contracts and mutating decorators without requiring primitive parameter lists:
+
+### 1. Complex Query Objects in Cache Contracts
+You can pass query objects to your cache methods and reference nested properties using dot notation or smart property matching:
+
+```csharp
+public record GetProductQuery(string TenantId, long ProductId);
+
+[HybridCacheKeys]
+public partial interface ICatalogCache
+{
+    // Option A: Explicit property navigation
+    [CacheTemplate("tenants:{query.TenantId}:products:{query.ProductId}", Tags = ["tenant:{query.TenantId}"])]
+    ValueTask<ProductDetailDto> GetProductAsync(GetProductQuery query);
+
+    // Option B: Smart property convention (Roslyn automatically maps {tenantId} -> query.TenantId)
+    // [CacheTemplate("tenants:{tenantId}:products:{productId}")]
+    // ValueTask<ProductDetailDto> GetProductAsync(GetProductQuery query);
+}
+```
+
+### 2. Command Objects in Mutator Decorators
+In Clean Architecture and CQRS, mutating methods typically receive command objects (e.g. `UpdateProductCommand`). Roslyn inspects the command's public properties at compile time and automatically resolves the cache eviction template:
+
+```csharp
+public record UpdateProductCommand(string TenantId, long ProductId, string Name, decimal Price);
+
+public interface IProductService
+{
+    // Reader declared: [CacheTemplate("tenants:{tenantId}:products:{productId}")]
+    // Roslyn resolves: $"tenants:{command.TenantId}:products:{command.ProductId}"
+    Task UpdateProductAsync(UpdateProductCommand command);
+
+    // Invalidate by tag directly on the command object:
+    [InvalidatesTag("tenant:{command.TenantId}")]
+    Task PurgeTenantAsync(PurgeTenantCommand command);
+}
+```
+
+The auto-generated decorator compiles into clean, allocation-free Native AOT C#:
+```csharp
+public async Task UpdateProductAsync(UpdateProductCommand command)
+{
+    await _inner.UpdateProductAsync(command).ConfigureAwait(false);
+    
+    // Automatically resolved and emitted by Roslyn at compile time:
+    await _cache.RemoveAsync($"tenants:{command.TenantId}:products:{command.ProductId}", cancellationToken).ConfigureAwait(false);
+}
+```
+
+---
+
 ## 🌐 Redis Eviction Backplane (Multi-Instance L1 Sync)
 
 When multiple application replicas (pods) run `HybridCache`, an eviction on Instance A purges its local L1 and Redis L2, but Instances B, C, and D retain stale entries in their local L1 until their local TTL expires.

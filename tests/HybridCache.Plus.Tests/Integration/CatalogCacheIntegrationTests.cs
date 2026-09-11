@@ -243,4 +243,67 @@ public class CatalogCacheIntegrationTests
         var std3 = await cache.GetProductAsync("standard_tenant", 502, StandardFactory);
         Assert.Equal(1, standardInvocations);
     }
+
+    [Fact]
+    public async Task GetProductByQueryAsync_WithQueryObject_CachesResultAndHitsL1()
+    {
+        var (_, cache, _, _) = CreateTestEnvironment();
+        var factoryInvocations = 0;
+        var query = new GetProductQuery("t1", 301);
+
+        ValueTask<ProductDetailDto> Factory(CancellationToken ct)
+        {
+            factoryInvocations++;
+            return ValueTask.FromResult(new ProductDetailDto(query.TenantId, query.ProductId, "Ultra Monitor", 499.99m));
+        }
+
+        // 1. Initial Call -> Cache Miss (Factory executes)
+        var product1 = await cache.GetProductByQueryAsync(query, Factory);
+        Assert.NotNull(product1);
+        Assert.Equal("Ultra Monitor", product1.Name);
+        Assert.Equal(1, factoryInvocations);
+
+        // 2. Second Call -> Cache Hit in L1 (Factory does not execute)
+        var product2 = await cache.GetProductByQueryAsync(query, Factory);
+        Assert.NotNull(product2);
+        Assert.Equal("Ultra Monitor", product2.Name);
+        Assert.Equal(1, factoryInvocations);
+    }
+
+    [Fact]
+    public async Task UpdateWithCommandAsync_ViaDecorator_AutomaticallyInvalidatesCacheKey()
+    {
+        var (_, cache, repo, innerRepo) = CreateTestEnvironment();
+        var factoryInvocations = 0;
+        var query = new GetProductQuery("t1", 302);
+
+        // Seed initial state in repo
+        await innerRepo.UpdateWithCommandAsync(new UpdateProductCommand("t1", 302, "Old Headset", 79.99m));
+
+        async ValueTask<ProductDetailDto> Factory(CancellationToken ct)
+        {
+            factoryInvocations++;
+            var p = await innerRepo.GetByIdAsync(query.TenantId, query.ProductId, ct);
+            return p!;
+        }
+
+        // 1. First read -> Miss (executes factory)
+        var item1 = await cache.GetProductByQueryAsync(query, Factory);
+        Assert.Equal("Old Headset", item1.Name);
+        Assert.Equal(1, factoryInvocations);
+
+        // 2. Second read -> Hit (L1)
+        var item2 = await cache.GetProductByQueryAsync(query, Factory);
+        Assert.Equal("Old Headset", item2.Name);
+        Assert.Equal(1, factoryInvocations);
+
+        // 3. Mutate repository via Decorator with Command object
+        var updated = await repo.UpdateWithCommandAsync(new UpdateProductCommand("t1", 302, "Wireless Noise-Canceling Headset", 179.99m));
+        Assert.Equal("Wireless Noise-Canceling Headset", updated.Name);
+
+        // 4. Third read -> MUST be a Cache Miss because the decorator automatically invalidated the key!
+        var item3 = await cache.GetProductByQueryAsync(query, Factory);
+        Assert.Equal("Wireless Noise-Canceling Headset", item3.Name);
+        Assert.Equal(2, factoryInvocations); // Factory was re-executed!
+    }
 }

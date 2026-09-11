@@ -307,4 +307,150 @@ public class GeneratorUnitTests
 
         Assert.Contains("RemoveByTagAsync", code);
     }
+
+    [Fact]
+    public void Generator_QueryObjectWithDotNotation_EmitsCleanExtensionMethods()
+    {
+        const string source = """
+        using System.Threading.Tasks;
+        using HybridCache.Plus;
+
+        namespace TestApp
+        {
+            public record OrderQuery(string TenantId, long OrderId);
+            public record OrderDto(long OrderId, string Status);
+
+            [HybridCacheKeys]
+            public partial interface IOrderCache
+            {
+                [CacheTemplate("orders:{query.TenantId}:{query.OrderId}",
+                    Tags = new[] { "tenant:{query.TenantId}" })]
+                ValueTask<OrderDto> GetOrderAsync(OrderQuery query);
+            }
+        }
+        """;
+
+        var (diagnostics, sources) = GeneratorTestHelper.RunGenerator(source);
+        var errors = diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
+        Assert.Empty(errors);
+
+        var extensionSource = sources.FirstOrDefault(s => s.HintName.Contains("OrderCacheHybridCacheExtensions"));
+        Assert.NotNull(extensionSource.SourceText);
+        var code = extensionSource.SourceText.ToString();
+
+        Assert.Contains("return $\"orders:{query.TenantId}:{query.OrderId}\";", code);
+        Assert.Contains("$\"tenant:{query.TenantId}\"", code);
+    }
+
+    [Fact]
+    public void Generator_QueryObjectWithSmartProperties_ResolvesFlatPlaceholders()
+    {
+        const string source = """
+        using System.Threading.Tasks;
+        using HybridCache.Plus;
+
+        namespace TestApp
+        {
+            public record OrderQuery(string TenantId, long OrderId);
+            public record OrderDto(long OrderId, string Status);
+
+            [HybridCacheKeys]
+            public partial interface IOrderCache
+            {
+                [CacheTemplate("orders:{tenantId}:{orderId}",
+                    Tags = new[] { "tenant:{tenantId}" })]
+                ValueTask<OrderDto> GetOrderAsync(OrderQuery query);
+            }
+        }
+        """;
+
+        var (diagnostics, sources) = GeneratorTestHelper.RunGenerator(source);
+        var errors = diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
+        Assert.Empty(errors);
+
+        var extensionSource = sources.FirstOrDefault(s => s.HintName.Contains("OrderCacheHybridCacheExtensions"));
+        Assert.NotNull(extensionSource.SourceText);
+        var code = extensionSource.SourceText.ToString();
+
+        Assert.Contains("return $\"orders:{query.TenantId}:{query.OrderId}\";", code);
+        Assert.Contains("$\"tenant:{query.TenantId}\"", code);
+    }
+
+    [Fact]
+    public void Generator_MutatingMethodWithCommandObject_ResolvesPropertiesInDecorator()
+    {
+        const string source = """
+        using System.Threading;
+        using System.Threading.Tasks;
+        using HybridCache.Plus;
+
+        namespace TestApp
+        {
+            public record UpdateOrderCommand(string TenantId, long OrderId, string Status);
+
+            public interface IOrderService
+            {
+                Task UpdateOrderAsync(UpdateOrderCommand command, CancellationToken cancellationToken = default);
+            }
+
+            [HybridCacheKeys]
+            public partial interface IOrderCache
+            {
+                [CacheTemplate("orders:{tenantId}:{orderId}", Tags = new[] { "tenant:{tenantId}" })]
+                [InvalidatedBy(typeof(IOrderService), nameof(IOrderService.UpdateOrderAsync))]
+                ValueTask<string> GetOrderAsync(string tenantId, long orderId);
+            }
+        }
+        """;
+
+        var (diagnostics, sources) = GeneratorTestHelper.RunGenerator(source);
+        var errors = diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
+        Assert.Empty(errors);
+
+        var decoratorSource = sources.FirstOrDefault(s => s.HintName.Contains("OrderServiceCacheDecorator"));
+        Assert.NotNull(decoratorSource.SourceText);
+        var code = decoratorSource.SourceText.ToString();
+
+        Assert.Contains("await _cache.RemoveAsync($\"orders:{command.TenantId}:{command.OrderId}\"", code);
+        Assert.Contains("await _cache.RemoveByTagAsync($\"tenant:{command.TenantId}\"", code);
+    }
+
+    [Fact]
+    public void Generator_InvalidatesTagWithCommandObject_ResolvesTagInDecorator()
+    {
+        const string source = """
+        using System.Threading;
+        using System.Threading.Tasks;
+        using HybridCache.Plus;
+
+        namespace TestApp
+        {
+            public record PurgeTenantCommand(string TenantId);
+
+            public interface ITenantService
+            {
+                [InvalidatesTag("tenant:{command.TenantId}")]
+                Task PurgeAsync(PurgeTenantCommand command, CancellationToken cancellationToken = default);
+            }
+
+            [HybridCacheKeys]
+            public partial interface ITenantCache
+            {
+                [CacheTemplate("tenants:{tenantId}:meta")]
+                [InvalidatedBy(typeof(ITenantService), nameof(ITenantService.PurgeAsync))]
+                ValueTask<string> GetMetaAsync(string tenantId);
+            }
+        }
+        """;
+
+        var (diagnostics, sources) = GeneratorTestHelper.RunGenerator(source);
+        var errors = diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
+        Assert.Empty(errors);
+
+        var decoratorSource = sources.FirstOrDefault(s => s.HintName.Contains("TenantServiceCacheDecorator"));
+        Assert.NotNull(decoratorSource.SourceText);
+        var code = decoratorSource.SourceText.ToString();
+
+        Assert.Contains("await _cache.RemoveByTagAsync($\"tenant:{command.TenantId}\"", code);
+    }
 }

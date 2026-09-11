@@ -1,10 +1,13 @@
 namespace HybridCache.Plus.Tests.Integration;
 
 public record ProductDetailDto(string TenantId, long ProductId, string Name, decimal Price);
+public record GetProductQuery(string TenantId, long ProductId);
+public record UpdateProductCommand(string TenantId, long ProductId, string NewName, decimal NewPrice);
 
 public interface IProductRepository
 {
     Task<ProductDetailDto> UpdateProductAsync(string tenantId, long productId, string newName, decimal newPrice, CancellationToken cancellationToken = default);
+    Task<ProductDetailDto> UpdateWithCommandAsync(UpdateProductCommand command, CancellationToken cancellationToken = default);
     Task DeleteProductAsync(string tenantId, long productId, CancellationToken cancellationToken = default);
     Task<ProductDetailDto?> GetByIdAsync(string tenantId, long productId, CancellationToken cancellationToken = default);
 }
@@ -22,6 +25,11 @@ public class ProductRepository : IProductRepository
         var product = new ProductDetailDto(tenantId, productId, newName, newPrice);
         _store[(tenantId, productId)] = product;
         return Task.FromResult(product);
+    }
+
+    public Task<ProductDetailDto> UpdateWithCommandAsync(UpdateProductCommand command, CancellationToken cancellationToken = default)
+    {
+        return UpdateProductAsync(command.TenantId, command.ProductId, command.NewName, command.NewPrice, cancellationToken);
     }
 
     public Task DeleteProductAsync(string tenantId, long productId, CancellationToken cancellationToken = default)
@@ -50,4 +58,12 @@ public partial interface ICatalogCache
         nameof(IProductRepository.UpdateProductAsync),
         nameof(IProductRepository.DeleteProductAsync))]
     ValueTask<ProductDetailDto> GetProductAsync(string tenantId, long productId);
+
+    [CacheTemplate("tenants:{query.TenantId}:products:{query.ProductId}",
+        PolicyName = "CatalogProducts",
+        LocalTtlSeconds = 60,
+        DistributedTtlSeconds = 600,
+        Tags = ["tenant:{query.TenantId}"])]
+    [InvalidatedBy<IProductRepository>(nameof(IProductRepository.UpdateWithCommandAsync))]
+    ValueTask<ProductDetailDto> GetProductByQueryAsync(GetProductQuery query);
 }
