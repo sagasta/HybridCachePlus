@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>preview</LangVersion>
+    <Nullable>enable</Nullable>
+    <RootNamespace>HybridCache.Plus</RootNamespace>
+    <AssemblyName>HybridCache.Plus</AssemblyName>
+    
+    <!-- NuGet Metadata -->
+    <PackageId>HybridCache.Plus</PackageId>
+    <Version>1.0.0</Version>
+    <Title>HybridCache.Plus</Title>
+    <Description>High-performance declarative source generator extension for Microsoft.Extensions.Caching.HybridCache in .NET 10 with typed contracts, zero-allocation span formatting, AOT support, and automated cross-interface invalidation decorators.</Description>
+    <Tags>caching;hybridcache;sourcegenerator;roslyn;aot;performance;redis;l1-l2;invalidation;decorator;net10</Tags>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <!-- Include Generator DLL in NuGet Package under analyzers/dotnet/cs -->
+  <ItemGroup>
+    <ProjectReference Include="..\HybridCache.Plus.Generators\HybridCache.Plus.Generators.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <OutputItemType>Analyzer</OutputItemType>
+      <PrivateAssets>all</PrivateAssets>
+    </ProjectReference>
+  </ItemGroup>
+
+  <Target Name="_AddAnalyzerToPackage" BeforeTargets="_GetPackageFiles">
+    <ItemGroup>
+      <None Include="..\HybridCache.Plus.Generators\bin\$(Configuration)\netstandard2.0\HybridCache.Plus.Generators.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" Version="10.10.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Condition="Exists('..\..\README.md')" />
+  </ItemGroup>
+
+</Project>

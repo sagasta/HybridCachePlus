@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.13.0" />
+    <PackageReference Include="NSubstitute" Version="5.3.0" />
+    <PackageReference Include="xunit.v3" Version="1.1.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.0.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" Version="10.10.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\HybridCache.Plus.Core\HybridCache.Plus.Core.csproj" />
+    <ProjectReference Include="..\..\src\HybridCache.Plus.Backplane.Redis\HybridCache.Plus.Backplane.Redis.csproj" />
+    <ProjectReference Include="..\..\src\HybridCache.Plus.Tenancy.Redis\HybridCache.Plus.Tenancy.Redis.csproj" />
+    <ProjectReference Include="..\..\src\HybridCache.Plus.Generators\HybridCache.Plus.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="true" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>preview</LangVersion>
+    <Nullable>enable</Nullable>
+    <RootNamespace>HybridCache.Plus.Tenancy.Redis</RootNamespace>
+    <AssemblyName>HybridCache.Plus.Tenancy.Redis</AssemblyName>
+    
+    <!-- NuGet Metadata -->
+    <PackageId>HybridCache.Plus.Tenancy.Redis</PackageId>
+    <Version>1.0.0</Version>
+    <Title>HybridCache.Plus.Tenancy.Redis</Title>
+    <Description>Multi-tenant dynamic Redis L2 cache routing for HybridCache.Plus in .NET 10 with Native AOT support and anti-stampede concurrency protection.</Description>
+    <Tags>caching;hybridcache;redis;multitenant;routing;tenancy;aot;net10</Tags>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\HybridCache.Plus.Core\HybridCache.Plus.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.12" />
+    <PackageReference Include="StackExchange.Redis" Version="3.2.0" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Condition="Exists('..\..\README.md')" />
+  </ItemGroup>
+
+</Project>

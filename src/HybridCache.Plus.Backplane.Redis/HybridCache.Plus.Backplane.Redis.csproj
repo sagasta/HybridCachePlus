@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>preview</LangVersion>
+    <Nullable>enable</Nullable>
+    <RootNamespace>HybridCache.Plus.Backplane.Redis</RootNamespace>
+    <AssemblyName>HybridCache.Plus.Backplane.Redis</AssemblyName>
+    
+    <!-- NuGet Metadata -->
+    <PackageId>HybridCache.Plus.Backplane.Redis</PackageId>
+    <Version>1.0.0</Version>
+    <Title>HybridCache.Plus.Backplane.Redis</Title>
+    <Description>Real-time multi-instance L1 cache invalidation synchronization via Redis Pub/Sub for HybridCache.Plus in .NET 10 with Native AOT support.</Description>
+    <Tags>caching;hybridcache;redis;pubsub;backplane;invalidation;aot;net10</Tags>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\HybridCache.Plus.Core\HybridCache.Plus.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="StackExchange.Redis" Version="3.2.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Condition="Exists('..\..\README.md')" />
+  </ItemGroup>
+
+</Project>

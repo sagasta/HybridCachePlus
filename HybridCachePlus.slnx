@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/HybridCache.Plus.Backplane.Redis/HybridCache.Plus.Backplane.Redis.csproj" />
+    <Project Path="src/HybridCache.Plus.Core/HybridCache.Plus.Core.csproj" />
+    <Project Path="src/HybridCache.Plus.Generators/HybridCache.Plus.Generators.csproj" />
+    <Project Path="src/HybridCache.Plus.Tenancy.Redis/HybridCache.Plus.Tenancy.Redis.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/HybridCache.Plus.Tests/HybridCache.Plus.Tests.csproj" />
+  </Folder>
+</Solution>
