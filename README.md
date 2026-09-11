@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/icon.png" width="160" height="160" alt="HybridCache.Plus Logo" />
+  <img src="https://raw.githubusercontent.com/sagasta/HybridCachePlus/main/assets/icon.png" width="160" height="160" alt="HybridCache.Plus Logo" />
 </p>
 
 # HybridCache.Plus
