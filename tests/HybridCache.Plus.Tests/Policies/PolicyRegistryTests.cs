@@ -8,6 +8,7 @@ using HybridCache.Plus.Tests.Integration;
 
 namespace HybridCache.Plus.Tests.Policies;
 
+[Collection("StaticStateTests")]
 public class PolicyRegistryTests
 {
     [Fact]

@@ -125,6 +125,7 @@ public static class HybridCachePlusServiceCollectionExtensions
         services.AddSingleton<HybridCachePlusPolicyRegistry>(sp =>
         {
             var options = sp.GetRequiredService<IOptions<HybridCachePlusPolicyOptions>>().Value;
+            global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.IsEnabled = options.EnableDiagnostics;
             var registry = new HybridCachePlusPolicyRegistry(options);
             var tenantAccessor = sp.GetService<ITenantContextAccessor>();
             HybridCachePlusPolicyRegistry.SetAmbientTenantAccessor(tenantAccessor);

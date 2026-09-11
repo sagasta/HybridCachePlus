@@ -41,6 +41,7 @@ public sealed class RedisEvictionPublisher : IEvictionPublisher
 
             var subscriber = _multiplexer.GetSubscriber();
             await subscriber.PublishAsync(_channel, (RedisValue)utf8Bytes, CommandFlags.FireAndForget).ConfigureAwait(false);
+            global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordBackplanePublished(msg.Target);
         }
         catch (Exception ex)
         {

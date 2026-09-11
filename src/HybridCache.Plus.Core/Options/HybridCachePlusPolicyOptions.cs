@@ -16,6 +16,12 @@ public sealed class HybridCachePlusPolicyOptions
     public int? DefaultDistributedTtlSeconds { get; set; }
 
     /// <summary>
+    /// Gets or sets whether OpenTelemetry / System.Diagnostics metrics and tracing are enabled.
+    /// Default is true.
+    /// </summary>
+    public bool EnableDiagnostics { get; set; } = true;
+
+    /// <summary>
     /// Global cache policies indexed by policy name or "{InterfaceName}.{MethodName}".
     /// </summary>
     public Dictionary<string, CachePolicyOptions> Policies { get; set; } = new(StringComparer.OrdinalIgnoreCase);

@@ -61,6 +61,9 @@ public sealed class RedisEvictionBackplaneWorker : BackgroundService
                 _logger.LogDebug("Received remote eviction notice: {EvictType} for '{Target}' from instance '{OriginInstanceId}'.",
                     message.EvictType, message.Target, message.OriginInstanceId);
 
+                global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordBackplaneReceived(message.Target);
+                global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction(message.Target, "Backplane");
+
                 // Purge local L1 cache
                 if (message.EvictType == EvictType.ByExactKey)
                 {

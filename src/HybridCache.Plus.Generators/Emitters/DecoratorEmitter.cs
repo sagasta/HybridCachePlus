@@ -104,6 +104,7 @@ public static class DecoratorEmitter
                 if (!string.IsNullOrEmpty(eviction.KeyTemplate))
                 {
                     sb.AppendLine($"{indent}    await _cache.RemoveAsync($\"{eviction.KeyTemplate}\", {ctName}).ConfigureAwait(false);");
+                    sb.AppendLine($"{indent}    global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction($\"{eviction.KeyTemplate}\", \"DecoratorMutation\");");
                     sb.AppendLine($"{indent}    if (_publisher != null)");
                     sb.AppendLine($"{indent}    {{");
                     sb.AppendLine($"{indent}        await _publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateKey($\"{eviction.KeyTemplate}\"), {ctName}).ConfigureAwait(false);");
@@ -112,6 +113,7 @@ public static class DecoratorEmitter
                 foreach (var tag in eviction.TagTemplates)
                 {
                     sb.AppendLine($"{indent}    await _cache.RemoveByTagAsync($\"{tag}\", {ctName}).ConfigureAwait(false);");
+                    sb.AppendLine($"{indent}    global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction($\"{tag}\", \"DecoratorTagMutation\");");
                     sb.AppendLine($"{indent}    if (_publisher != null)");
                     sb.AppendLine($"{indent}    {{");
                     sb.AppendLine($"{indent}        await _publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateTag($\"{tag}\"), {ctName}).ConfigureAwait(false);");
@@ -148,6 +150,7 @@ public static class DecoratorEmitter
                 if (!string.IsNullOrEmpty(eviction.KeyTemplate))
                 {
                     sb.AppendLine($"{indent}    _cache.RemoveAsync($\"{eviction.KeyTemplate}\", {ctName}).AsTask().GetAwaiter().GetResult();");
+                    sb.AppendLine($"{indent}    global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction($\"{eviction.KeyTemplate}\", \"DecoratorMutation\");");
                     sb.AppendLine($"{indent}    if (_publisher != null)");
                     sb.AppendLine($"{indent}    {{");
                     sb.AppendLine($"{indent}        _publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateKey($\"{eviction.KeyTemplate}\"), {ctName}).AsTask().GetAwaiter().GetResult();");
@@ -156,6 +159,7 @@ public static class DecoratorEmitter
                 foreach (var tag in eviction.TagTemplates)
                 {
                     sb.AppendLine($"{indent}    _cache.RemoveByTagAsync($\"{tag}\", {ctName}).AsTask().GetAwaiter().GetResult();");
+                    sb.AppendLine($"{indent}    global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction($\"{tag}\", \"DecoratorTagMutation\");");
                     sb.AppendLine($"{indent}    if (_publisher != null)");
                     sb.AppendLine($"{indent}    {{");
                     sb.AppendLine($"{indent}        _publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateTag($\"{tag}\"), {ctName}).AsTask().GetAwaiter().GetResult();");

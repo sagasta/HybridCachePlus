@@ -80,3 +80,6 @@ $RECYCLE.BIN/
 *.local
 appsettings.*.local.json
 appsettings.Local.json
+
+# Local Playground / Testing (Aspire)
+playground/
