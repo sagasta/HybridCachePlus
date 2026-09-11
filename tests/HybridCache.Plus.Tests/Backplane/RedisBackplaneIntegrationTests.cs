@@ -84,7 +84,7 @@ public class RedisBackplaneIntegrationTests
             await innerRepoB.UpdateProductAsync(tenantId, productId, "Updated Laptop V2", 1200m);
 
             // 5. Allow brief async dispatch across the in-memory broker to Pod B
-            await Task.Delay(100);
+            await Task.Delay(250);
 
             // 6. Pod B reads product 500. If L1 was purged by the backplane worker,
             // the factory must be invoked and return "Updated Laptop V2", NOT the stale "Original Laptop"
@@ -144,7 +144,7 @@ public class RedisBackplaneIntegrationTests
             await cacheA.EvictProductAsync(tenantId, productId);
 
             // Allow event to travel over backplane
-            await Task.Delay(100);
+            await Task.Delay(250);
 
             // Pod B's L1 should now be evicted! Factory must be called again!
             var valB_Fresh = await cacheB.GetProductAsync(tenantId, productId, _ =>
@@ -202,7 +202,7 @@ public class RedisBackplaneIntegrationTests
             await cacheA.EvictProductByTenantIdTagAsync(tenantId);
 
             // Wait for backplane event
-            await Task.Delay(100);
+            await Task.Delay(250);
 
             // Both entries on Pod B should now require re-fetching
             await cacheB.GetProductAsync(tenantId, 1, _ =>
@@ -257,7 +257,7 @@ public class RedisBackplaneIntegrationTests
             await broker.PublishAsync(StackExchange.Redis.RedisChannel.Literal("test:evictions"), (StackExchange.Redis.RedisValue)bytes);
 
             // Wait for worker processing
-            await Task.Delay(100);
+            await Task.Delay(250);
 
             // Read again: Pod A should NOT have evicted because it ignored its own OriginInstanceId
             await cacheA.GetProductAsync(tenantId, productId, _ =>

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon.png" width="160" height="160" alt="HybridCache.Plus Logo" />
+</p>
+
 # HybridCache.Plus
 
 [![NuGet](https://img.shields.io/nuget/v/HybridCache.Plus.svg)](https://www.nuget.org/packages/HybridCache.Plus/)

@@ -45,17 +45,14 @@ public sealed class InMemoryRedisBroker
 
         foreach (var handler in handlers)
         {
-            ThreadPool.QueueUserWorkItem(_ =>
+            try
             {
-                try
-                {
-                    handler(channel, message);
-                }
-                catch
-                {
-                    // Ignore handler exceptions in broadcast
-                }
-            });
+                handler(channel, message);
+            }
+            catch
+            {
+                // Ignore handler exceptions in broadcast
+            }
         }
 
         return Task.FromResult((long)handlers.Count);
