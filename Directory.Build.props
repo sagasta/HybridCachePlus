@@ -5,7 +5,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
-    <NoWarn>$(NoWarn);CS8669;RS2008</NoWarn>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS8669;RS2008;CS1591</NoWarn>
     <Authors>HybridCache.Plus Contributors</Authors>
     <Company>HybridCache.Plus</Company>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

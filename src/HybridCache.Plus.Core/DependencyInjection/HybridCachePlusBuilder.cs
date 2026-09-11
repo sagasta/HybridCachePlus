@@ -17,6 +17,17 @@ public sealed class HybridCachePlusBuilder(IServiceCollection services)
     public IServiceCollection Services { get; } = services ?? throw new ArgumentNullException(nameof(services));
 
     /// <summary>
+    /// Configures whether OpenTelemetry metrics and tracing instrumentation are enabled.
+    /// </summary>
+    public HybridCachePlusBuilder EnableDiagnostics(bool enabled = true)
+    {
+        _policyOptions.EnableDiagnostics = enabled;
+        Services.Configure<HybridCachePlusPolicyOptions>(options => options.EnableDiagnostics = enabled);
+        HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.IsEnabled = enabled;
+        return this;
+    }
+
+    /// <summary>
     /// Configures global, method, and multi-tenant cache policies and TTLs.
     /// </summary>
     public HybridCachePlusBuilder ConfigurePolicies(Action<HybridCachePlusPolicyOptions> configure)

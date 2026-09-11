@@ -216,27 +216,31 @@ HybridCache.Plus includes built-in, production-grade observability powered by **
 | **`hybridcache_plus.duration`** | Histogram (`ms`) | Execution latency of cache operations in milliseconds. | `cache.operation`, `cache.policy`, `cache.tenant` |
 
 ### OpenTelemetry Setup
-
-Register the meter in your service collection using the constant `HybridCachePlusDiagnostics.MeterName`:
-
+ 
+Register the meter and tracing source in your service collection using the constants in `HybridCachePlusDiagnostics`:
+ 
 ```csharp
 using HybridCache.Plus.Diagnostics;
-
+ 
 services.AddOpenTelemetry()
     .WithMetrics(metrics =>
     {
         metrics.AddMeter(HybridCachePlusDiagnostics.MeterName); // "HybridCache.Plus"
+    })
+    .WithTracing(tracing =>
+    {
+        tracing.AddSource(HybridCachePlusDiagnostics.ActivitySourceName); // "HybridCache.Plus"
     });
 ```
-
+ 
 ### Zero-Overhead Fast Path & Opt-Out
-
+ 
 - **Zero-Allocation Fast Path**: If no metric listener or exporter is actively subscribed to the meter, metrics collection is skipped with a single boolean flag check (`counter.Enabled`), ensuring 100% zero overhead in performance-critical paths.
-- **Global Opt-Out**: You can disable diagnostics completely in options:
+- **Global Opt-Out**: You can disable diagnostics completely in builder:
   ```csharp
-  services.AddHybridCachePlus(options =>
+  services.AddHybridCachePlus(builder =>
   {
-      options.EnableDiagnostics = false; // Disables all metrics and tracing
+      builder.EnableDiagnostics(false); // Disables all metrics and tracing
   });
   ```
 

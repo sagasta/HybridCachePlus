@@ -38,20 +38,23 @@ public class DiagnosticsTests
                     if (tag.Key == "cache.template") template = tag.Value?.ToString();
                 }
 
-                hitMeasurements.Add((measurement, policy, tenant, template));
+                if (policy == "UniqueHitPolicy")
+                {
+                    hitMeasurements.Add((measurement, policy, tenant, template));
+                }
             }
         });
 
         listener.Start();
 
         // Act
-        HybridCachePlusDiagnostics.RecordHit("CatalogProducts", "tenant_alpha", "tenants:{tenantId}:products:{productId}");
+        HybridCachePlusDiagnostics.RecordHit("UniqueHitPolicy", "tenant_alpha", "tenants:{tenantId}:products:{productId}");
 
         // Assert
         Assert.Single(hitMeasurements);
         var hit = hitMeasurements[0];
         Assert.Equal(1, hit.Value);
-        Assert.Equal("CatalogProducts", hit.Policy);
+        Assert.Equal("UniqueHitPolicy", hit.Policy);
         Assert.Equal("tenant_alpha", hit.Tenant);
         Assert.Equal("tenants:{tenantId}:products:{productId}", hit.Template);
     }
@@ -86,20 +89,23 @@ public class DiagnosticsTests
                     if (tag.Key == "cache.template") template = tag.Value?.ToString();
                 }
 
-                missMeasurements.Add((measurement, policy, tenant, template));
+                if (policy == "UniqueMissPolicy")
+                {
+                    missMeasurements.Add((measurement, policy, tenant, template));
+                }
             }
         });
 
         listener.Start();
 
         // Act
-        HybridCachePlusDiagnostics.RecordMiss("CatalogProducts", "tenant_beta", "tenants:{tenantId}:products:{productId}");
+        HybridCachePlusDiagnostics.RecordMiss("UniqueMissPolicy", "tenant_beta", "tenants:{tenantId}:products:{productId}");
 
         // Assert
         Assert.Single(missMeasurements);
         var miss = missMeasurements[0];
         Assert.Equal(1, miss.Value);
-        Assert.Equal("CatalogProducts", miss.Policy);
+        Assert.Equal("UniqueMissPolicy", miss.Policy);
         Assert.Equal("tenant_beta", miss.Tenant);
     }
 
@@ -247,5 +253,18 @@ public class DiagnosticsTests
         // Assert
         Assert.NotNull(capturedActivity);
         Assert.Equal(HybridCachePlusDiagnostics.ActivitySource.Name, capturedActivity.Source.Name);
+    }
+
+    [Fact]
+    public void Builder_EnableDiagnostics_ConfiguresDiagnosticsFlag()
+    {
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        var builder = new HybridCachePlusBuilder(services);
+
+        builder.EnableDiagnostics(false);
+        Assert.False(HybridCachePlusDiagnostics.IsEnabled);
+
+        builder.EnableDiagnostics(true);
+        Assert.True(HybridCachePlusDiagnostics.IsEnabled);
     }
 }

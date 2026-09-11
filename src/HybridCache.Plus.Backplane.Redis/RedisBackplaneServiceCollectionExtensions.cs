@@ -1,9 +1,12 @@
+using HybridCache.Plus;
+using HybridCache.Plus.Backplane;
+using HybridCache.Plus.Backplane.Redis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 
-namespace HybridCache.Plus.Backplane.Redis;
+namespace Microsoft.Extensions.DependencyInjection;
 
 /// <summary>
 /// Service collection extension methods for registering the Redis Eviction Backplane with HybridCache.Plus.
