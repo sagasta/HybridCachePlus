@@ -9,6 +9,7 @@
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
 [![Native AOT](https://img.shields.io/badge/Native%20AOT-Ready-brightgreen)](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Donate-orange?logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/sagasta)
 
 **HybridCache.Plus** is a high-performance extension library for `Microsoft.Extensions.Caching.HybridCache` in **.NET 10**, powered by **Roslyn Source Generators**.
 
@@ -334,6 +335,18 @@ dotnet add package HybridCache.Plus.Backplane.Redis
 # (Optional) For dynamic multi-tenant L2 Redis routing
 dotnet add package HybridCache.Plus.Tenancy.Redis
 ```
+
+---
+
+## 💖 Support & Sponsoring
+
+If **HybridCache.Plus** has helped simplify your architecture, speed up your applications, or saved you development time, consider supporting ongoing open-source maintenance:
+
+<p align="left">
+  <a href="https://buymeacoffee.com/sagasta" target="_blank">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="48" />
+  </a>
+</p>
 
 ---
 
