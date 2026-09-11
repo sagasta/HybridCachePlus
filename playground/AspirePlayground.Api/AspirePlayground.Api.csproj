@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.18.0" />
+    <PackageReference Include="Scalar.AspNetCore" Version="2.17.3" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" Version="10.10.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\HybridCache.Plus.Core\HybridCache.Plus.Core.csproj" />
+    <ProjectReference Include="..\..\src\HybridCache.Plus.Backplane.Redis\HybridCache.Plus.Backplane.Redis.csproj" />
+    <ProjectReference Include="..\..\src\HybridCache.Plus.Tenancy.Redis\HybridCache.Plus.Tenancy.Redis.csproj" />
+    <ProjectReference Include="..\..\src\HybridCache.Plus.Generators\HybridCache.Plus.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="true" />
+  </ItemGroup>
+
+</Project>

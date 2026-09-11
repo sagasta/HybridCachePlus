@@ -81,5 +81,7 @@ $RECYCLE.BIN/
 appsettings.*.local.json
 appsettings.Local.json
 
-# Local Playground / Testing (Aspire)
-playground/
+# SQLite database files
+*.db
+*.db-shm
+*.db-wal

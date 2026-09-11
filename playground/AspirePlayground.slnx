@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="AspirePlayground.Api/AspirePlayground.Api.csproj" />
+  <Project Path="AspirePlayground.AppHost/AspirePlayground.AppHost.csproj" />
+  <Project Path="AspirePlayground.Tests/AspirePlayground.Tests.csproj" />
+</Solution>
