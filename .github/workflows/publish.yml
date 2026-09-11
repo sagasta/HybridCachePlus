@@ -1,0 +1,68 @@
+name: Publish to NuGet
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Optional version override (e.g. 1.0.1). Leave empty to use Directory.Build.props version'
+        required: false
+        type: string
+
+jobs:
+  publish:
+    name: Publish Packages
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore HybridCachePlus.slnx
+
+      - name: Build solution
+        run: dotnet build HybridCachePlus.slnx -c Release --no-restore
+
+      - name: Run tests
+        run: dotnet test HybridCachePlus.slnx -c Release --no-build --verbosity normal
+
+      - name: Pack NuGet packages (default version)
+        if: "${{ github.event.inputs.version == '' }}"
+        run: dotnet pack HybridCachePlus.slnx -c Release --no-build -o ./nupkgs
+
+      - name: Pack NuGet packages (version override)
+        if: "${{ github.event.inputs.version != '' }}"
+        run: dotnet pack HybridCachePlus.slnx -c Release --no-build /p:Version=${{ github.event.inputs.version }} -o ./nupkgs
+
+      - name: NuGet Login (Trusted Publishing via OIDC)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Push to NuGet.org
+        run: >
+          dotnet nuget push "./nupkgs/*.nupkg"
+          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ./nupkgs/*.nupkg
+          generate_release_notes: true

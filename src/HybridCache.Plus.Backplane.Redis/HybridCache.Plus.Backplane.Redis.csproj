@@ -9,7 +9,6 @@
     
     <!-- NuGet Metadata -->
     <PackageId>HybridCache.Plus.Backplane.Redis</PackageId>
-    <Version>1.0.0</Version>
     <Title>HybridCache.Plus.Backplane.Redis</Title>
     <Description>Real-time multi-instance L1 cache invalidation synchronization via Redis Pub/Sub for HybridCache.Plus in .NET 10 with Native AOT support.</Description>
     <Tags>caching;hybridcache;redis;pubsub;backplane;invalidation;aot;net10</Tags>

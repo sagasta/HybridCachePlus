@@ -204,20 +204,23 @@ public class DiagnosticsTests
                     if (tag.Key == "cache.policy") pol = tag.Value?.ToString();
                     if (tag.Key == "cache.tenant") ten = tag.Value?.ToString();
                 }
-                durations.Add((measurement, op, pol, ten));
+                if (pol == "UniqueDiagnosticDurationPolicy")
+                {
+                    durations.Add((measurement, op, pol, ten));
+                }
             }
         });
 
         listener.Start();
 
         // Act
-        HybridCachePlusDiagnostics.RecordDuration(4.5, "GetOrCreate", "CatalogProducts", "tenant_alpha");
+        HybridCachePlusDiagnostics.RecordDuration(4.5, "GetOrCreate", "UniqueDiagnosticDurationPolicy", "tenant_alpha");
 
         // Assert
         Assert.Single(durations);
         Assert.Equal(4.5, durations[0].Value);
         Assert.Equal("GetOrCreate", durations[0].Operation);
-        Assert.Equal("CatalogProducts", durations[0].Policy);
+        Assert.Equal("UniqueDiagnosticDurationPolicy", durations[0].Policy);
         Assert.Equal("tenant_alpha", durations[0].Tenant);
     }
 

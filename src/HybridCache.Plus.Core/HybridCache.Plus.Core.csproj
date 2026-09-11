@@ -9,7 +9,6 @@
     
     <!-- NuGet Metadata -->
     <PackageId>HybridCache.Plus</PackageId>
-    <Version>1.0.0</Version>
     <Title>HybridCache.Plus</Title>
     <Description>High-performance declarative source generator extension for Microsoft.Extensions.Caching.HybridCache in .NET 10 with typed contracts, zero-allocation span formatting, AOT support, and automated cross-interface invalidation decorators.</Description>
     <Tags>caching;hybridcache;sourcegenerator;roslyn;aot;performance;redis;l1-l2;invalidation;decorator;net10</Tags>

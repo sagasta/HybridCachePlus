@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore HybridCachePlus.slnx
+
+      - name: Build solution
+        run: dotnet build HybridCachePlus.slnx -c Release --no-restore
+
+      - name: Run tests
+        run: dotnet test HybridCachePlus.slnx -c Release --no-build --verbosity normal
+
+      - name: Pack NuGet packages
+        run: dotnet pack HybridCachePlus.slnx -c Release --no-build -o ./nupkgs
+
+      - name: Upload NuGet packages artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: ./nupkgs/*.nupkg
+          retention-days: 7

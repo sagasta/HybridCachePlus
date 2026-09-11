@@ -9,7 +9,6 @@
     
     <!-- NuGet Metadata -->
     <PackageId>HybridCache.Plus.Tenancy.Redis</PackageId>
-    <Version>1.0.0</Version>
     <Title>HybridCache.Plus.Tenancy.Redis</Title>
     <Description>Multi-tenant dynamic Redis L2 cache routing for HybridCache.Plus in .NET 10 with Native AOT support and anti-stampede concurrency protection.</Description>
     <Tags>caching;hybridcache;redis;multitenant;routing;tenancy;aot;net10</Tags>
