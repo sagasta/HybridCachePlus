@@ -1,8 +1,8 @@
-using Microsoft.Extensions.Caching.Distributed;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
+using HybridCache.Plus;
 using HybridCache.Plus.Tenancy;
 using HybridCache.Plus.Tenancy.Redis;
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Microsoft.Extensions.DependencyInjection;
 

@@ -156,7 +156,6 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
             var localTtl = 0;
             var distributedTtl = 0;
             var tagsList = new List<string>();
-            var defensiveCopy = false;
             string? policyName = null;
 
             foreach (var namedArg in cacheTemplateAttr.NamedArguments)
@@ -183,9 +182,22 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                         }
                     }
                 }
-                else if (namedArg.Key == "DefensiveCopy" && namedArg.Value.Value is bool dc)
+            }
+
+            // Also include any tag templates declared via [InvalidatesTag] on the cache method
+            var additionalTagAttrs = methodSymbol.GetAttributes().Where(a =>
+                a.AttributeClass != null &&
+                (a.AttributeClass.Name == "InvalidatesTagAttribute" ||
+                 a.AttributeClass.Name == "InvalidatesTag"));
+
+            foreach (var tagAttr in additionalTagAttrs)
+            {
+                if (tagAttr.ConstructorArguments.Length > 0 &&
+                    tagAttr.ConstructorArguments[0].Value is string tag &&
+                    !string.IsNullOrWhiteSpace(tag) &&
+                    !tagsList.Contains(tag))
                 {
-                    defensiveCopy = dc;
+                    tagsList.Add(tag);
                 }
             }
 
@@ -367,7 +379,6 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                 localTtl,
                 distributedTtl,
                 new EquatableArray<string>(tagsList),
-                defensiveCopy,
                 new EquatableArray<ParameterModel>(parameters),
                 new EquatableArray<InvalidationTargetModel>(invalidationTargets)));
         }
@@ -383,7 +394,7 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
             new EquatableArray<(InvalidationTargetModel, INamedTypeSymbol)>(pendingInvalidations));
     }
 
-    private static DecoratorInterfaceModel? BuildDecoratorModel(
+    private static DecoratorInterfaceModel BuildDecoratorModel(
         INamedTypeSymbol targetInterfaceSymbol,
         List<InvalidationTargetModel> invalidations)
     {
@@ -442,6 +453,30 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
             foreach (var inv in matchingInvalidations)
             {
                 evictionActions.Add(new EvictionActionModel(inv.KeyTemplate, inv.TagTemplates));
+            }
+
+            // Check direct [InvalidatesTag] attributes on this method
+            var directTagAttrs = method.GetAttributes().Where(a =>
+                a.AttributeClass != null &&
+                (a.AttributeClass.Name == "InvalidatesTagAttribute" ||
+                 a.AttributeClass.Name == "InvalidatesTag")).ToList();
+
+            if (directTagAttrs.Count > 0)
+            {
+                var directTags = new List<string>();
+                foreach (var attr in directTagAttrs)
+                {
+                    if (attr.ConstructorArguments.Length > 0 &&
+                        attr.ConstructorArguments[0].Value is string tag &&
+                        !string.IsNullOrWhiteSpace(tag))
+                    {
+                        directTags.Add(tag);
+                    }
+                }
+                if (directTags.Count > 0)
+                {
+                    evictionActions.Add(new EvictionActionModel(string.Empty, new EquatableArray<string>(directTags)));
+                }
             }
 
             methods.Add(new DecoratorMethodModel(

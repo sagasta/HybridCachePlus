@@ -104,6 +104,8 @@ public static class ExtensionMethodsEmitter
 
         sb.AppendLine($"            if (global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.IsMetricsEnabled)");
         sb.AppendLine($"            {{");
+        sb.AppendLine($"                var stopwatch = global::System.Diagnostics.Stopwatch.StartNew();");
+        sb.AppendLine($"                using var activity = global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.StartActivity(\"{method.MethodName}\", \"{method.PolicyName}\", {tenantArg});");
         sb.AppendLine($"                bool isMiss = false;");
         sb.AppendLine($"                var result = await cache.GetOrCreateAsync(");
         sb.AppendLine($"                    cacheKey,");
@@ -115,6 +117,8 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine($"                    options,");
         sb.AppendLine($"                    tags,");
         sb.AppendLine($"                    cancellationToken).ConfigureAwait(false);");
+        sb.AppendLine($"                stopwatch.Stop();");
+        sb.AppendLine($"                global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordDuration(stopwatch.Elapsed.TotalMilliseconds, \"GetOrCreate\", \"{method.PolicyName}\", {tenantArg});");
         sb.AppendLine($"                if (isMiss)");
         sb.AppendLine($"                {{");
         sb.AppendLine($"                    global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordMiss(\"{method.PolicyName}\", {tenantArg}, \"{method.KeyTemplate}\");");
@@ -158,6 +162,8 @@ public static class ExtensionMethodsEmitter
 
         sb.AppendLine($"            if (global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.IsMetricsEnabled)");
         sb.AppendLine($"            {{");
+        sb.AppendLine($"                var stopwatch = global::System.Diagnostics.Stopwatch.StartNew();");
+        sb.AppendLine($"                using var activity = global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.StartActivity(\"{method.MethodName}\", \"{method.PolicyName}\", {tenantArg});");
         sb.AppendLine($"                bool isMiss = false;");
         sb.AppendLine($"                var result = await cache.GetOrCreateAsync(");
         sb.AppendLine($"                    cacheKey,");
@@ -170,6 +176,8 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine($"                    options,");
         sb.AppendLine($"                    tags,");
         sb.AppendLine($"                    cancellationToken).ConfigureAwait(false);");
+        sb.AppendLine($"                stopwatch.Stop();");
+        sb.AppendLine($"                global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordDuration(stopwatch.Elapsed.TotalMilliseconds, \"GetOrCreate\", \"{method.PolicyName}\", {tenantArg});");
         sb.AppendLine($"                if (isMiss)");
         sb.AppendLine($"                {{");
         sb.AppendLine($"                    global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordMiss(\"{method.PolicyName}\", {tenantArg}, \"{method.KeyTemplate}\");");

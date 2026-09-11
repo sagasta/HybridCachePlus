@@ -9,15 +9,7 @@ namespace HybridCache.Plus.Tests.Backplane;
 public sealed class InMemoryRedisBroker
 {
     private readonly List<Action<RedisChannel, RedisValue>> _subscribers = [];
-    private readonly object _lock = new();
-
-    public int SubscriberCount
-    {
-        get
-        {
-            lock (_lock) return _subscribers.Count;
-        }
-    }
+    private readonly Lock _lock = new();
 
     public void Subscribe(Action<RedisChannel, RedisValue> handler)
     {

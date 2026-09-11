@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using HybridCache.Plus.Diagnostics;
 using Xunit;
@@ -22,7 +23,7 @@ public class DiagnosticsTests
             }
         };
 
-        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, state) =>
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
         {
             if (instrument.Name == "hybridcache_plus.hits")
             {
@@ -70,7 +71,7 @@ public class DiagnosticsTests
             }
         };
 
-        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, state) =>
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
         {
             if (instrument.Name == "hybridcache_plus.misses")
             {
@@ -117,7 +118,7 @@ public class DiagnosticsTests
             }
         };
 
-        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, state) =>
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
         {
             if (instrument.Name == "hybridcache_plus.evictions")
             {
@@ -173,5 +174,75 @@ public class DiagnosticsTests
 
         // Reset for subsequent tests
         HybridCachePlusDiagnostics.IsEnabled = true;
+    }
+
+    [Fact]
+    public void RecordDuration_RecordsMeasurements_ToDurationHistogram()
+    {
+        HybridCachePlusDiagnostics.IsEnabled = true;
+        var durations = new List<(double Value, string? Operation, string? Policy, string? Tenant)>();
+
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meterListener) =>
+        {
+            if (instrument.Meter.Name == HybridCachePlusDiagnostics.MeterName && instrument.Name == "hybridcache_plus.duration")
+            {
+                meterListener.EnableMeasurementEvents(instrument);
+            }
+        };
+
+        listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, _) =>
+        {
+            if (instrument.Name == "hybridcache_plus.duration")
+            {
+                string? op = null;
+                string? pol = null;
+                string? ten = null;
+                foreach (var tag in tags)
+                {
+                    if (tag.Key == "cache.operation") op = tag.Value?.ToString();
+                    if (tag.Key == "cache.policy") pol = tag.Value?.ToString();
+                    if (tag.Key == "cache.tenant") ten = tag.Value?.ToString();
+                }
+                durations.Add((measurement, op, pol, ten));
+            }
+        });
+
+        listener.Start();
+
+        // Act
+        HybridCachePlusDiagnostics.RecordDuration(4.5, "GetOrCreate", "CatalogProducts", "tenant_alpha");
+
+        // Assert
+        Assert.Single(durations);
+        Assert.Equal(4.5, durations[0].Value);
+        Assert.Equal("GetOrCreate", durations[0].Operation);
+        Assert.Equal("CatalogProducts", durations[0].Policy);
+        Assert.Equal("tenant_alpha", durations[0].Tenant);
+    }
+
+    [Fact]
+    public void ActivitySource_WhenListenerAttached_StartsAndEmitsActivity()
+    {
+        HybridCachePlusDiagnostics.IsEnabled = true;
+        Activity? capturedActivity = null;
+
+        using var listener = new ActivityListener();
+        listener.ShouldListenTo = source => source.Name == HybridCachePlusDiagnostics.ActivitySourceName;
+        listener.Sample = (ref _) => ActivitySamplingResult.AllData;
+        listener.ActivityStopped = act => capturedActivity = act;
+        ActivitySource.AddActivityListener(listener);
+
+        // Act
+        using (var act = HybridCachePlusDiagnostics.StartActivity("GetProductAsync", "CatalogProducts", "tenant_beta"))
+        {
+            Assert.NotNull(act);
+            Assert.Equal("CatalogProducts", act.GetTagItem("cache.policy"));
+            Assert.Equal("tenant_beta", act.GetTagItem("cache.tenant"));
+        }
+
+        // Assert
+        Assert.NotNull(capturedActivity);
+        Assert.Equal(HybridCachePlusDiagnostics.ActivitySource.Name, capturedActivity.Source.Name);
     }
 }

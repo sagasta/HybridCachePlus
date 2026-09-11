@@ -169,7 +169,7 @@ public class CatalogCacheIntegrationTests
             "t1",
             999,
             "StatePayload",
-            static (state, ct) => ValueTask.FromResult(new ProductDetailDto("t1", 999, state, 10m)));
+            static (state, _) => ValueTask.FromResult(new ProductDetailDto("t1", 999, state, 10m)));
 
         Assert.Equal("StatePayload", product.Name);
     }

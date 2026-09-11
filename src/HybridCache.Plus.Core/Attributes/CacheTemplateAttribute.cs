@@ -33,9 +33,4 @@ public sealed class CacheTemplateAttribute(string template) : Attribute
     /// Gets or sets the collection of tag templates associated with this cache entry (e.g. ["tenant:{tenantId}"]).
     /// </summary>
     public string[] Tags { get; set; } = [];
-
-    /// <summary>
-    /// Gets or sets whether defensive copies should be made for mutable cache entries.
-    /// </summary>
-    public bool DefensiveCopy { get; set; }
 }

@@ -3,7 +3,6 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
-using HybridCache.Plus.Backplane;
 
 namespace HybridCache.Plus.Backplane.Redis;
 
@@ -27,7 +26,7 @@ public sealed class RedisEvictionBackplaneWorker : BackgroundService
     {
         _multiplexer = multiplexer ?? throw new ArgumentNullException(nameof(multiplexer));
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-        _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+        _options = options.Value ?? throw new ArgumentNullException(nameof(options));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _channel = RedisChannel.Literal(_options.ChannelName);
     }
@@ -39,13 +38,13 @@ public sealed class RedisEvictionBackplaneWorker : BackgroundService
 
         var subscriber = _multiplexer.GetSubscriber();
 
-        await subscriber.SubscribeAsync(_channel, async (_, redisValue) =>
+        await subscriber.SubscribeAsync(_channel, async void (_, redisValue) =>
         {
             try
             {
                 if (redisValue.IsNullOrEmpty) return;
 
-                byte[]? rawBytes = (byte[]?)redisValue;
+                var rawBytes = (byte[]?)redisValue;
                 if (rawBytes == null || rawBytes.Length == 0) return;
 
                 var message = JsonSerializer.Deserialize(
@@ -61,8 +60,8 @@ public sealed class RedisEvictionBackplaneWorker : BackgroundService
                 _logger.LogDebug("Received remote eviction notice: {EvictType} for '{Target}' from instance '{OriginInstanceId}'.",
                     message.EvictType, message.Target, message.OriginInstanceId);
 
-                global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordBackplaneReceived(message.Target);
-                global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction(message.Target, "Backplane");
+                Diagnostics.HybridCachePlusDiagnostics.RecordBackplaneReceived(message.Target);
+                Diagnostics.HybridCachePlusDiagnostics.RecordEviction(message.Target, "Backplane");
 
                 // Purge local L1 cache
                 if (message.EvictType == EvictType.ByExactKey)

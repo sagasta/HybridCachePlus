@@ -1,5 +1,3 @@
-using HybridCache.Plus;
-
 namespace HybridCache.Plus.Tests.Integration;
 
 public record ProductDetailDto(string TenantId, long ProductId, string Name, decimal Price);

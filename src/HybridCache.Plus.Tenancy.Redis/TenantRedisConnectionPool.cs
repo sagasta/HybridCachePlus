@@ -21,21 +21,16 @@ public interface ITenantRedisConnectionPool
 /// <summary>
 /// Default implementation of <see cref="ITenantRedisConnectionPool"/>.
 /// </summary>
-public sealed class TenantRedisConnectionPool : ITenantRedisConnectionPool, IAsyncDisposable, IDisposable
+public sealed class TenantRedisConnectionPool(
+    IOptions<MultiTenantRedisOptions> options,
+    IServiceProvider serviceProvider)
+    : ITenantRedisConnectionPool, IAsyncDisposable, IDisposable
 {
-    private readonly MultiTenantRedisOptions _options;
-    private readonly IServiceProvider _serviceProvider;
+    private readonly MultiTenantRedisOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    private readonly IServiceProvider _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
     private readonly ConcurrentDictionary<string, IDistributedCache> _caches = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, IConnectionMultiplexer> _ownedMultiplexers = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
-
-    public TenantRedisConnectionPool(
-        IOptions<MultiTenantRedisOptions> options,
-        IServiceProvider serviceProvider)
-    {
-        _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-        _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
-    }
 
     /// <inheritdoc />
     public IDistributedCache GetCacheForTenant(string tenantId)

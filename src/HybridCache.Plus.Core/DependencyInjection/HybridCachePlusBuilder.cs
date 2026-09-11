@@ -1,27 +1,20 @@
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 using HybridCache.Plus.Options;
 using HybridCache.Plus.Policies;
-using HybridCache.Plus.Tenancy;
+using Microsoft.Extensions.DependencyInjection;
 
-namespace Microsoft.Extensions.DependencyInjection;
+namespace HybridCache.Plus;
 
 /// <summary>
 /// Fluent configuration builder for HybridCache.Plus features.
 /// </summary>
-public sealed class HybridCachePlusBuilder
+public sealed class HybridCachePlusBuilder(IServiceCollection services)
 {
     private readonly HybridCachePlusPolicyOptions _policyOptions = new();
 
     /// <summary>
     /// The application service collection.
     /// </summary>
-    public IServiceCollection Services { get; }
-
-    public HybridCachePlusBuilder(IServiceCollection services)
-    {
-        Services = services ?? throw new ArgumentNullException(nameof(services));
-    }
+    public IServiceCollection Services { get; } = services ?? throw new ArgumentNullException(nameof(services));
 
     /// <summary>
     /// Configures global, method, and multi-tenant cache policies and TTLs.
@@ -102,37 +95,5 @@ public sealed class HybridCachePlusBuilder
 
         HybridCachePlusPolicyRegistry.Current = new HybridCachePlusPolicyRegistry(_policyOptions);
         return this;
-    }
-}
-
-/// <summary>
-/// Dependency injection registration extensions for HybridCache.Plus.
-/// </summary>
-public static class HybridCachePlusServiceCollectionExtensions
-{
-    /// <summary>
-    /// Registers HybridCache.Plus core services, policy registry, and returns a builder to configure extensions.
-    /// </summary>
-    public static IServiceCollection AddHybridCachePlus(
-        this IServiceCollection services,
-        Action<HybridCachePlusBuilder>? configure = null)
-    {
-        services.AddOptions<HybridCachePlusPolicyOptions>();
-
-        var builder = new HybridCachePlusBuilder(services);
-        configure?.Invoke(builder);
-
-        services.AddSingleton<HybridCachePlusPolicyRegistry>(sp =>
-        {
-            var options = sp.GetRequiredService<IOptions<HybridCachePlusPolicyOptions>>().Value;
-            global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.IsEnabled = options.EnableDiagnostics;
-            var registry = new HybridCachePlusPolicyRegistry(options);
-            var tenantAccessor = sp.GetService<ITenantContextAccessor>();
-            HybridCachePlusPolicyRegistry.SetAmbientTenantAccessor(tenantAccessor);
-            HybridCachePlusPolicyRegistry.Current = registry;
-            return registry;
-        });
-
-        return services;
     }
 }

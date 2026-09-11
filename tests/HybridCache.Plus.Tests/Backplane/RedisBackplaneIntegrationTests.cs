@@ -11,31 +11,31 @@ namespace HybridCache.Plus.Tests.Backplane;
 public class RedisBackplaneIntegrationTests
 {
     [Fact]
-    public void BackplaneMessage_NativeAotSerialization_RoundtripsAccurately()
+    public void BackplaneMessage_NativeAotSerialization_RoundTripsAccurately()
     {
         var original = new BackplaneEvictionMessage(EvictType.ByExactKey, "tenants:t1:products:42", "pod-alpha-123");
 
-        byte[] utf8Bytes = JsonSerializer.SerializeToUtf8Bytes(original, BackplaneJsonContext.Default.BackplaneEvictionMessage);
+        var utf8Bytes = JsonSerializer.SerializeToUtf8Bytes(original, BackplaneJsonContext.Default.BackplaneEvictionMessage);
         Assert.NotEmpty(utf8Bytes);
 
-        var roundtripped = JsonSerializer.Deserialize(utf8Bytes.AsSpan(), BackplaneJsonContext.Default.BackplaneEvictionMessage);
+        var roundTripped = JsonSerializer.Deserialize(utf8Bytes.AsSpan(), BackplaneJsonContext.Default.BackplaneEvictionMessage);
 
-        Assert.Equal(original.EvictType, roundtripped.EvictType);
-        Assert.Equal(original.Target, roundtripped.Target);
-        Assert.Equal(original.OriginInstanceId, roundtripped.OriginInstanceId);
+        Assert.Equal(original.EvictType, roundTripped.EvictType);
+        Assert.Equal(original.Target, roundTripped.Target);
+        Assert.Equal(original.OriginInstanceId, roundTripped.OriginInstanceId);
     }
 
     [Fact]
-    public void BackplaneMessage_TagSerialization_RoundtripsAccurately()
+    public void BackplaneMessage_TagSerialization_RoundTripsAccurately()
     {
         var original = BackplaneEvictionMessage.CreateTag("tenant:corp_99", "pod-beta-456");
 
-        byte[] utf8Bytes = JsonSerializer.SerializeToUtf8Bytes(original, BackplaneJsonContext.Default.BackplaneEvictionMessage);
-        var roundtripped = JsonSerializer.Deserialize(utf8Bytes.AsSpan(), BackplaneJsonContext.Default.BackplaneEvictionMessage);
+        var utf8Bytes = JsonSerializer.SerializeToUtf8Bytes(original, BackplaneJsonContext.Default.BackplaneEvictionMessage);
+        var roundTripped = JsonSerializer.Deserialize(utf8Bytes.AsSpan(), BackplaneJsonContext.Default.BackplaneEvictionMessage);
 
-        Assert.Equal(EvictType.ByTag, roundtripped.EvictType);
-        Assert.Equal("tenant:corp_99", roundtripped.Target);
-        Assert.Equal("pod-beta-456", roundtripped.OriginInstanceId);
+        Assert.Equal(EvictType.ByTag, roundTripped.EvictType);
+        Assert.Equal("tenant:corp_99", roundTripped.Target);
+        Assert.Equal("pod-beta-456", roundTripped.OriginInstanceId);
     }
 
     [Fact]
@@ -48,7 +48,7 @@ public class RedisBackplaneIntegrationTests
         var (providerA, cacheA, repoA, innerRepoA) = CreatePodInstance("pod-A", broker);
 
         // 3. Build Instance B (Pod B)
-        var (providerB, cacheB, repoB, innerRepoB) = CreatePodInstance("pod-B", broker);
+        var (providerB, cacheB, _, innerRepoB) = CreatePodInstance("pod-B", broker);
 
         // Start background workers for both pods
         var hostedServicesA = providerA.GetServices<IHostedService>();
@@ -67,13 +67,13 @@ public class RedisBackplaneIntegrationTests
             await innerRepoB.UpdateProductAsync(tenantId, productId, "Original Laptop", 1000m);
 
             // Pod A caches product 500
-            var p1 = await cacheA.GetProductAsync(tenantId, productId, async _ =>
-                (await innerRepoA.GetByIdAsync(tenantId, productId))!);
+            var p1 = await cacheA.GetProductAsync(tenantId, productId, async token =>
+                (await innerRepoA.GetByIdAsync(tenantId, productId, token))!);
             Assert.Equal("Original Laptop", p1.Name);
 
             // Pod B caches product 500 into its own L1 memory
-            var pB1 = await cacheB.GetProductAsync(tenantId, productId, async _ =>
-                (await innerRepoB.GetByIdAsync(tenantId, productId))!);
+            var pB1 = await cacheB.GetProductAsync(tenantId, productId, async token =>
+                (await innerRepoB.GetByIdAsync(tenantId, productId, token))!);
             Assert.Equal("Original Laptop", pB1.Name);
 
             // 4. Pod A executes a mutation through the decorated repository
@@ -88,8 +88,8 @@ public class RedisBackplaneIntegrationTests
 
             // 6. Pod B reads product 500. If L1 was purged by the backplane worker,
             // the factory must be invoked and return "Updated Laptop V2", NOT the stale "Original Laptop"
-            var pB2 = await cacheB.GetProductAsync(tenantId, productId, async _ =>
-                (await innerRepoB.GetByIdAsync(tenantId, productId))!);
+            var pB2 = await cacheB.GetProductAsync(tenantId, productId, async token =>
+                (await innerRepoB.GetByIdAsync(tenantId, productId, token))!);
 
             Assert.Equal("Updated Laptop V2", pB2.Name);
             Assert.Equal(1200m, pB2.Price);
@@ -108,7 +108,7 @@ public class RedisBackplaneIntegrationTests
     {
         var broker = new InMemoryRedisBroker();
         var (providerA, cacheA, _, _) = CreatePodInstance("pod-A", broker);
-        var (providerB, cacheB, _, innerRepoB) = CreatePodInstance("pod-B", broker);
+        var (providerB, cacheB, _, _) = CreatePodInstance("pod-B", broker);
 
         var hostedServicesA = providerA.GetServices<IHostedService>();
         foreach (var svc in hostedServicesA) await svc.StartAsync(CancellationToken.None);
@@ -132,12 +132,12 @@ public class RedisBackplaneIntegrationTests
             Assert.Equal(1, calls);
 
             // Reading again from Pod B returns cached L1 item without calling factory
-            var valB_Cached = await cacheB.GetProductAsync(tenantId, productId, _ =>
+            var valBCached = await cacheB.GetProductAsync(tenantId, productId, _ =>
             {
                 calls++;
                 return ValueTask.FromResult(new ProductDetailDto(tenantId, productId, $"Item-{calls}", 50m));
             });
-            Assert.Equal("Item-1", valB_Cached.Name);
+            Assert.Equal("Item-1", valBCached.Name);
             Assert.Equal(1, calls);
 
             // Pod A explicitly calls generated EvictProductAsync
@@ -147,12 +147,12 @@ public class RedisBackplaneIntegrationTests
             await Task.Delay(250);
 
             // Pod B's L1 should now be evicted! Factory must be called again!
-            var valB_Fresh = await cacheB.GetProductAsync(tenantId, productId, _ =>
+            var valBFresh = await cacheB.GetProductAsync(tenantId, productId, _ =>
             {
                 calls++;
                 return ValueTask.FromResult(new ProductDetailDto(tenantId, productId, $"Item-{calls}", 50m));
             });
-            Assert.Equal("Item-2", valB_Fresh.Name);
+            Assert.Equal("Item-2", valBFresh.Name);
             Assert.Equal(2, calls);
         }
         finally

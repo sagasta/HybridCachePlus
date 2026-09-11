@@ -69,14 +69,9 @@ public static class DecoratorEmitter
         {
             sb.AppendLine($"{indent}public {method.ReturnType} {method.MethodName}({paramList})");
             sb.AppendLine($"{indent}{{");
-            if (method.ReturnsVoid)
-            {
-                sb.AppendLine($"{indent}    _inner.{method.MethodName}({argList});");
-            }
-            else
-            {
-                sb.AppendLine($"{indent}    return _inner.{method.MethodName}({argList});");
-            }
+            sb.AppendLine(method.ReturnsVoid
+                ? $"{indent}    _inner.{method.MethodName}({argList});"
+                : $"{indent}    return _inner.{method.MethodName}({argList});");
             sb.AppendLine($"{indent}}}");
             sb.AppendLine();
             return;
@@ -88,14 +83,9 @@ public static class DecoratorEmitter
             sb.AppendLine($"{indent}public async {method.ReturnType} {method.MethodName}({paramList})");
             sb.AppendLine($"{indent}{{");
 
-            if (method.IsGenericTask)
-            {
-                sb.AppendLine($"{indent}    var result = await _inner.{method.MethodName}({argList}).ConfigureAwait(false);");
-            }
-            else
-            {
-                sb.AppendLine($"{indent}    await _inner.{method.MethodName}({argList}).ConfigureAwait(false);");
-            }
+            sb.AppendLine(method.IsGenericTask
+                ? $"{indent}    var result = await _inner.{method.MethodName}({argList}).ConfigureAwait(false);"
+                : $"{indent}    await _inner.{method.MethodName}({argList}).ConfigureAwait(false);");
 
             sb.AppendLine();
             sb.AppendLine($"{indent}    // Automated cache invalidation via HybridCache.Plus");

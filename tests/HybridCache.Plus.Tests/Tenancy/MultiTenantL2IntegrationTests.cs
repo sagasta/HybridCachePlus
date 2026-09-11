@@ -2,10 +2,8 @@ using System.Collections.Concurrent;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 using Xunit;
 using HybridCache.Plus.Tenancy;
-using HybridCache.Plus.Tenancy.Redis;
 using HybridCache.Plus.Tests.Integration;
 
 namespace HybridCache.Plus.Tests.Tenancy;
@@ -25,10 +23,10 @@ public class MultiTenantL2IntegrationTests
         {
             options.UseMultiTenantRedisL2(tenant =>
             {
-                tenant.ResolveDistributedCache((tenantId, sp) =>
+                tenant.ResolveDistributedCache((tenantId, _) =>
                 {
                     return tenantCaches.GetOrAdd(tenantId, _ =>
-                        new MemoryDistributedCache(global::Microsoft.Extensions.Options.Options.Create(new MemoryDistributedCacheOptions())));
+                        new MemoryDistributedCache(Microsoft.Extensions.Options.Options.Create(new MemoryDistributedCacheOptions())));
                 });
                 tenant.EnableKeyPrefixTenantExtraction = true;
             });
@@ -114,16 +112,16 @@ public class MultiTenantL2IntegrationTests
         Assert.Equal("T2 Entity", p2.Name);
 
         // Re-read from L1 without invoking factory (using dummy factory that throws if called)
-        var p1_cached = await cache.GetProductAsync("tenant_1", commonProductId, _ =>
+        var p1Cached = await cache.GetProductAsync("tenant_1", commonProductId, _ =>
             throw new InvalidOperationException("Factory should not be invoked on L1 hit"));
 
-        var p2_cached = await cache.GetProductAsync("tenant_2", commonProductId, _ =>
+        var p2Cached = await cache.GetProductAsync("tenant_2", commonProductId, _ =>
             throw new InvalidOperationException("Factory should not be invoked on L1 hit"));
 
-        Assert.Equal("T1 Entity", p1_cached.Name);
-        Assert.Equal(100m, p1_cached.Price);
-        Assert.Equal("T2 Entity", p2_cached.Name);
-        Assert.Equal(200m, p2_cached.Price);
+        Assert.Equal("T1 Entity", p1Cached.Name);
+        Assert.Equal(100m, p1Cached.Price);
+        Assert.Equal("T2 Entity", p2Cached.Name);
+        Assert.Equal(200m, p2Cached.Price);
     }
 
     [Fact]

@@ -57,7 +57,6 @@ public sealed class CacheMethodModel(
     int localTtlSeconds,
     int distributedTtlSeconds,
     EquatableArray<string> tags,
-    bool defensiveCopy,
     EquatableArray<ParameterModel> parameters,
     EquatableArray<InvalidationTargetModel> invalidationTargets)
     : IEquatable<CacheMethodModel>
@@ -70,7 +69,6 @@ public sealed class CacheMethodModel(
     public int LocalTtlSeconds { get; } = localTtlSeconds;
     public int DistributedTtlSeconds { get; } = distributedTtlSeconds;
     public EquatableArray<string> Tags { get; } = tags;
-    public bool DefensiveCopy { get; } = defensiveCopy;
     public EquatableArray<ParameterModel> Parameters { get; } = parameters;
     public EquatableArray<InvalidationTargetModel> InvalidationTargets { get; } = invalidationTargets;
 
@@ -86,7 +84,6 @@ public sealed class CacheMethodModel(
                LocalTtlSeconds == other.LocalTtlSeconds &&
                DistributedTtlSeconds == other.DistributedTtlSeconds &&
                Tags.Equals(other.Tags) &&
-               DefensiveCopy == other.DefensiveCopy &&
                Parameters.Equals(other.Parameters) &&
                InvalidationTargets.Equals(other.InvalidationTargets);
     }

@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Options;
-using HybridCache.Plus.Tenancy;
 
 namespace HybridCache.Plus.Tenancy.Redis;
 
@@ -9,26 +8,19 @@ namespace HybridCache.Plus.Tenancy.Redis;
 /// Intercepts HybridCache L2 operations, dynamically routing them to the appropriate tenant's Redis instance
 /// while acting as a non-blocking pass-through to preserve HybridCache anti-stampede semaphores.
 /// </summary>
-public sealed class MultiTenantDistributedCacheRouter : IDistributedCache
+public sealed class MultiTenantDistributedCacheRouter(
+    ITenantRedisConnectionPool pool,
+    IOptions<MultiTenantRedisOptions> options,
+    ITenantContextAccessor? tenantAccessor = null)
+    : IDistributedCache
 {
-    private readonly ITenantRedisConnectionPool _pool;
-    private readonly ITenantContextAccessor? _tenantAccessor;
-    private readonly MultiTenantRedisOptions _options;
-
-    public MultiTenantDistributedCacheRouter(
-        ITenantRedisConnectionPool pool,
-        IOptions<MultiTenantRedisOptions> options,
-        ITenantContextAccessor? tenantAccessor = null)
-    {
-        _pool = pool ?? throw new ArgumentNullException(nameof(pool));
-        _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-        _tenantAccessor = tenantAccessor;
-    }
+    private readonly ITenantRedisConnectionPool _pool = pool ?? throw new ArgumentNullException(nameof(pool));
+    private readonly MultiTenantRedisOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
 
     private IDistributedCache ResolveTargetCache(string key)
     {
         // 1. Ambient context resolution
-        var tenantId = _tenantAccessor?.CurrentTenantId;
+        var tenantId = tenantAccessor?.CurrentTenantId;
 
         // 2. Zero-allocation key prefix fallback
         if (string.IsNullOrEmpty(tenantId) && _options.EnableKeyPrefixTenantExtraction)

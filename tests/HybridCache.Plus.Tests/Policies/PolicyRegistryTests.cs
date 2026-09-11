@@ -165,7 +165,7 @@ public class PolicyRegistryTests
         var cache = sp.GetRequiredService<global::Microsoft.Extensions.Caching.Hybrid.HybridCache>();
 
         // 1. VIP Customer call
-        var vipProduct = await cache.GetProductAsync("vip_customer", 1001, ct =>
+        var vipProduct = await cache.GetProductAsync("vip_customer", 1001, _ =>
             ValueTask.FromResult(new ProductDetailDto("vip_customer", 1001, "VIP Item", 100m)));
         Assert.NotNull(vipProduct);
 
@@ -174,12 +174,41 @@ public class PolicyRegistryTests
         Assert.Equal(TimeSpan.FromSeconds(25), vipOptions.Expiration);
 
         // 2. Standard Customer call
-        var standardProduct = await cache.GetProductAsync("standard_customer", 1002, ct =>
+        var standardProduct = await cache.GetProductAsync("standard_customer", 1002, _ =>
             ValueTask.FromResult(new ProductDetailDto("standard_customer", 1002, "Standard Item", 50m)));
         Assert.NotNull(standardProduct);
 
         var standardOptions = HybridCachePlusPolicyRegistry.Resolve("ICatalogCache.GetProductAsync", "standard_customer", new HybridCacheEntryOptions());
         Assert.Equal(TimeSpan.FromSeconds(45), standardOptions.LocalCacheExpiration);
         Assert.Equal(TimeSpan.FromSeconds(450), standardOptions.Expiration);
+    }
+
+    [Fact]
+    public void Builder_ConfigurePolicies_AppliesGlobalOptionsDirectly()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddHybridCache();
+
+        services.AddHybridCachePlus(builder =>
+        {
+            builder.ConfigurePolicies(opts =>
+            {
+                opts.EnableDiagnostics = false;
+                opts.Policies["GlobalBatchPolicy"] = new CachePolicyOptions
+                {
+                    LocalTtlSeconds = 12,
+                    DistributedTtlSeconds = 120
+                };
+            });
+        });
+
+        var sp = services.BuildServiceProvider();
+        var registry = sp.GetRequiredService<HybridCachePlusPolicyRegistry>();
+        Assert.NotNull(registry);
+
+        var resolved = HybridCachePlusPolicyRegistry.Resolve("GlobalBatchPolicy", null, new HybridCacheEntryOptions());
+        Assert.Equal(TimeSpan.FromSeconds(12), resolved.LocalCacheExpiration);
+        Assert.Equal(TimeSpan.FromSeconds(120), resolved.Expiration);
     }
 }

@@ -242,4 +242,69 @@ public class GeneratorUnitTests
 
         Assert.Contains("HybridCachePlusPolicyRegistry.Resolve(\"CustomOrderPolicy\"", code);
     }
+
+    [Fact]
+    public void AttributeProperties_ExposeConfiguredValuesAccurately()
+    {
+        var cacheTemplate = new CacheTemplateAttribute("users:{id}")
+        {
+            PolicyName = "UserPolicy",
+            LocalTtlSeconds = 15,
+            DistributedTtlSeconds = 150,
+            Tags = ["tenant:{tenantId}"]
+        };
+        Assert.Equal("users:{id}", cacheTemplate.Template);
+        Assert.Equal("UserPolicy", cacheTemplate.PolicyName);
+        Assert.Equal(15, cacheTemplate.LocalTtlSeconds);
+        Assert.Equal(150, cacheTemplate.DistributedTtlSeconds);
+        Assert.Single(cacheTemplate.Tags);
+
+        var nonGenericInv = new InvalidatedByAttribute(typeof(IDisposable), "Dispose");
+        Assert.Equal(typeof(IDisposable), nonGenericInv.TargetInterface);
+        Assert.Contains("Dispose", nonGenericInv.MethodNames);
+
+        var genericInv = new InvalidatedByAttribute<IAsyncDisposable>("DisposeAsync");
+        Assert.Equal(typeof(IAsyncDisposable), genericInv.TargetInterface);
+        Assert.Contains("DisposeAsync", genericInv.MethodNames);
+
+        var tagAttr = new InvalidatesTagAttribute("tenant:{tenantId}");
+        Assert.Equal("tenant:{tenantId}", tagAttr.TagTemplate);
+    }
+
+    [Fact]
+    public void Generator_InvalidatesTagAttribute_EmitsTagEvictionInDecorator()
+    {
+        const string source = """
+        using System;
+        using System.Threading;
+        using System.Threading.Tasks;
+        using HybridCache.Plus;
+
+        namespace TestApp
+        {
+            public interface ITenantRepository
+            {
+                [InvalidatesTag("tenant:{tenantId}")]
+                Task PurgeTenantAsync(string tenantId, CancellationToken cancellationToken = default);
+            }
+
+            [HybridCacheKeys]
+            public partial interface ITenantCache
+            {
+                [CacheTemplate("tenants:{tenantId}:meta", Tags = new[] { "tenant:{tenantId}" })]
+                [InvalidatedBy(typeof(ITenantRepository), nameof(ITenantRepository.PurgeTenantAsync))]
+                ValueTask<string> GetMetaAsync(string tenantId);
+            }
+        }
+        """;
+
+        var (diagnostics, sources) = GeneratorTestHelper.RunGenerator(source);
+        Assert.Empty(diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error));
+
+        var decoratorSource = sources.FirstOrDefault(s => s.HintName.Contains("TenantRepositoryCacheDecorator"));
+        Assert.NotNull(decoratorSource.SourceText);
+        var code = decoratorSource.SourceText.ToString();
+
+        Assert.Contains("RemoveByTagAsync", code);
+    }
 }

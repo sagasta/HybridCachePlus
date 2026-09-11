@@ -59,15 +59,32 @@ public static class HybridCachePlusDiagnostics
     public static bool IsEnabled { get; set; } = true;
 
     /// <summary>
-    /// Gets whether any active listener is observing hit/miss metrics.
+    /// Gets whether any active listener is observing hit/miss metrics or tracing.
     /// Allows zero-allocation fast-path checks.
     /// </summary>
-    public static bool IsMetricsEnabled => IsEnabled && (s_hitsCounter.Enabled || s_missesCounter.Enabled);
+    public static bool IsMetricsEnabled => IsEnabled && (s_hitsCounter.Enabled || s_missesCounter.Enabled || s_durationHistogram.Enabled || s_activitySource.HasListeners());
 
     /// <summary>
     /// Gets the shared ActivitySource for distributed tracing.
     /// </summary>
     public static ActivitySource ActivitySource => s_activitySource;
+
+    /// <summary>
+    /// Starts a distributed tracing activity if an active listener is attached.
+    /// </summary>
+    public static Activity? StartActivity(string operation, string policy, string? tenant = null)
+    {
+        if (!IsEnabled || !s_activitySource.HasListeners()) return null;
+
+        var activity = s_activitySource.StartActivity($"HybridCache.Plus {operation}");
+        if (activity != null)
+        {
+            activity.SetTag("cache.operation", operation);
+            activity.SetTag("cache.policy", policy);
+            if (tenant != null) activity.SetTag("cache.tenant", tenant);
+        }
+        return activity;
+    }
 
     /// <summary>
     /// Records a cache hit.

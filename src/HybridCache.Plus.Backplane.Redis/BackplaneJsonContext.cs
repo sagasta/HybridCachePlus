@@ -1,5 +1,4 @@
 using System.Text.Json.Serialization;
-using HybridCache.Plus.Backplane;
 
 namespace HybridCache.Plus.Backplane.Redis;
 
@@ -12,6 +11,4 @@ namespace HybridCache.Plus.Backplane.Redis;
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     GenerationMode = JsonSourceGenerationMode.Default)]
 [JsonSerializable(typeof(BackplaneEvictionMessage))]
-public sealed partial class BackplaneJsonContext : JsonSerializerContext
-{
-}
+public sealed partial class BackplaneJsonContext : JsonSerializerContext;

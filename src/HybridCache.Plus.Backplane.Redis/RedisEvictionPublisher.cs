@@ -2,7 +2,6 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
-using HybridCache.Plus.Backplane;
 
 namespace HybridCache.Plus.Backplane.Redis;
 
@@ -23,7 +22,7 @@ public sealed class RedisEvictionPublisher : IEvictionPublisher
         ILogger<RedisEvictionPublisher> logger)
     {
         _multiplexer = multiplexer ?? throw new ArgumentNullException(nameof(multiplexer));
-        _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+        _options = options.Value ?? throw new ArgumentNullException(nameof(options));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _channel = RedisChannel.Literal(_options.ChannelName);
     }
@@ -41,7 +40,7 @@ public sealed class RedisEvictionPublisher : IEvictionPublisher
 
             var subscriber = _multiplexer.GetSubscriber();
             await subscriber.PublishAsync(_channel, (RedisValue)utf8Bytes, CommandFlags.FireAndForget).ConfigureAwait(false);
-            global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordBackplanePublished(msg.Target);
+            Diagnostics.HybridCachePlusDiagnostics.RecordBackplanePublished(msg.Target);
         }
         catch (Exception ex)
         {

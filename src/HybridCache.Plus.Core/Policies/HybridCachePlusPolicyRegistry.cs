@@ -8,18 +8,13 @@ namespace HybridCache.Plus.Policies;
 /// <summary>
 /// Pre-computed registry resolving cache entry options with cascading multi-tenant overrides and zero-allocation execution.
 /// </summary>
-public sealed class HybridCachePlusPolicyRegistry
+public sealed class HybridCachePlusPolicyRegistry(HybridCachePlusPolicyOptions options)
 {
     private static volatile HybridCachePlusPolicyRegistry _current = new(new HybridCachePlusPolicyOptions());
     private static volatile ITenantContextAccessor? _ambientTenantAccessor;
 
-    private readonly HybridCachePlusPolicyOptions _options;
+    private readonly HybridCachePlusPolicyOptions _options = options ?? throw new ArgumentNullException(nameof(options));
     private readonly ConcurrentDictionary<string, HybridCacheEntryOptions> _cache = new(StringComparer.OrdinalIgnoreCase);
-
-    public HybridCachePlusPolicyRegistry(HybridCachePlusPolicyOptions options)
-    {
-        _options = options ?? throw new ArgumentNullException(nameof(options));
-    }
 
     /// <summary>
     /// Gets or sets the globally active policy registry instance.
