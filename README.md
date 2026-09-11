@@ -4,6 +4,7 @@
 
 # HybridCache.Plus
 
+[![CI](https://github.com/sagasta/HybridCachePlus/actions/workflows/ci.yml/badge.svg)](https://github.com/sagasta/HybridCachePlus/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/v/HybridCache.Plus.svg)](https://www.nuget.org/packages/HybridCache.Plus/)
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
 [![Native AOT](https://img.shields.io/badge/Native%20AOT-Ready-brightgreen)](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/)
