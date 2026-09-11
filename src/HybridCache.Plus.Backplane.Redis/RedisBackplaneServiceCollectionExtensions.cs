@@ -34,7 +34,12 @@ public static class RedisBackplaneServiceCollectionExtensions
             var opts = sp.GetRequiredService<IOptions<RedisBackplaneOptions>>().Value;
             if (opts.ConnectionMultiplexer != null) return opts.ConnectionMultiplexer;
             if (opts.ConnectionMultiplexerFactory != null) return opts.ConnectionMultiplexerFactory(sp);
-            if (!string.IsNullOrEmpty(opts.Configuration)) return ConnectionMultiplexer.Connect(opts.Configuration!);
+            if (!string.IsNullOrEmpty(opts.Configuration))
+            {
+                var config = ConfigurationOptions.Parse(opts.Configuration!);
+                config.AbortOnConnectFail = false;
+                return ConnectionMultiplexer.Connect(config);
+            }
 
             throw new InvalidOperationException(
                 "No Redis ConnectionMultiplexer was configured for HybridCache.Plus backplane. " +

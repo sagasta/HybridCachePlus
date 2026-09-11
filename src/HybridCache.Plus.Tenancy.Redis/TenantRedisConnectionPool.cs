@@ -72,7 +72,9 @@ public sealed class TenantRedisConnectionPool(
             var connStr = _options.ConnectionStringResolver(tenantId);
             if (!string.IsNullOrEmpty(connStr))
             {
-                var mux = ConnectionMultiplexer.Connect(connStr!);
+                var config = ConfigurationOptions.Parse(connStr!);
+                config.AbortOnConnectFail = false;
+                var mux = ConnectionMultiplexer.Connect(config);
                 _ownedMultiplexers[tenantId] = mux;
                 return CreateRedisCacheFromMultiplexer(mux, tenantId);
             }
