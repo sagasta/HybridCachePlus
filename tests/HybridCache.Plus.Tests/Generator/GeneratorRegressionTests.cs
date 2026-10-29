@@ -204,6 +204,42 @@ public class GeneratorRegressionTests
     }
 
     [Fact]
+    public void Generator_UnrelatedEdit_ReusesCachedOutputs()
+    {
+        const string contracts = """
+        using System.Threading;
+        using System.Threading.Tasks;
+        using HybridCache.Plus;
+
+        namespace TestApp
+        {
+            public record ProductQuery(string TenantId, long ProductId);
+
+            public interface IProductRepository
+            {
+                [InvalidatesTag("tenant:{tenantId}")]
+                Task UpdateProductAsync(string tenantId, long productId, CancellationToken cancellationToken = default);
+            }
+
+            [HybridCacheKeys]
+            public partial interface ICatalogCache
+            {
+                [CacheTemplate("tenants:{tenantId}:products:{productId}", Tags = new[] { "tenant:{tenantId}" })]
+                [InvalidatedBy(typeof(IProductRepository), nameof(IProductRepository.UpdateProductAsync))]
+                ValueTask<string> GetProductAsync(ProductQuery query);
+            }
+        }
+        """;
+
+        var trackedSteps = GeneratorTestHelper.RunTwiceWithUnrelatedEdit(contracts);
+
+        Assert.NotEmpty(trackedSteps);
+        Assert.All(trackedSteps, step => Assert.True(
+            step.Reason is IncrementalStepRunReason.Cached or IncrementalStepRunReason.Unchanged,
+            $"Output step was re-executed ({step.Reason}) after an unrelated edit."));
+    }
+
+    [Fact]
     public void Generator_Diagnostics_PointToTheOffendingLine()
     {
         const string source = """

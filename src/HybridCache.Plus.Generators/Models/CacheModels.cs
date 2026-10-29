@@ -18,51 +18,6 @@ public sealed class ParameterModel(string name, string type, bool isCancellation
     public override int GetHashCode() => (Name, Type, IsCancellationToken).GetHashCode();
 }
 
-public sealed class InvalidationTargetModel(
-    string interfaceFullName,
-    string interfaceName,
-    string interfaceNamespace,
-    string methodName,
-    string cacheMethodName,
-    string keyTemplate,
-    EquatableArray<string> tagTemplates)
-    : IEquatable<InvalidationTargetModel>
-{
-    public string InterfaceFullName { get; } = interfaceFullName;
-    public string InterfaceName { get; } = interfaceName;
-    public string InterfaceNamespace { get; } = interfaceNamespace;
-    public string MethodName { get; } = methodName;
-
-    /// <summary>
-    /// The cached contract method whose entry is invalidated (used for diagnostics).
-    /// </summary>
-    public string CacheMethodName { get; } = cacheMethodName;
-
-    /// <summary>
-    /// The raw (unresolved) key template, re-resolved against the mutating method's parameters.
-    /// </summary>
-    public string KeyTemplate { get; } = keyTemplate;
-
-    /// <summary>
-    /// The raw (unresolved) tag templates, re-resolved against the mutating method's parameters.
-    /// </summary>
-    public EquatableArray<string> TagTemplates { get; } = tagTemplates;
-
-    public bool Equals(InvalidationTargetModel? other)
-    {
-        if (other is null) return false;
-        if (ReferenceEquals(this, other)) return true;
-        return InterfaceFullName == other.InterfaceFullName &&
-               MethodName == other.MethodName &&
-               CacheMethodName == other.CacheMethodName &&
-               KeyTemplate == other.KeyTemplate &&
-               TagTemplates.Equals(other.TagTemplates);
-    }
-
-    public override bool Equals(object? obj) => Equals(obj as InvalidationTargetModel);
-    public override int GetHashCode() => (InterfaceFullName, MethodName, KeyTemplate).GetHashCode();
-}
-
 public sealed class CacheMethodModel(
     string methodName,
     string returnType,
@@ -73,8 +28,7 @@ public sealed class CacheMethodModel(
     int localTtlSeconds,
     int distributedTtlSeconds,
     EquatableArray<string> tags,
-    EquatableArray<ParameterModel> parameters,
-    EquatableArray<InvalidationTargetModel> invalidationTargets)
+    EquatableArray<ParameterModel> parameters)
     : IEquatable<CacheMethodModel>
 {
     public string MethodName { get; } = methodName;
@@ -91,7 +45,6 @@ public sealed class CacheMethodModel(
     public int DistributedTtlSeconds { get; } = distributedTtlSeconds;
     public EquatableArray<string> Tags { get; } = tags;
     public EquatableArray<ParameterModel> Parameters { get; } = parameters;
-    public EquatableArray<InvalidationTargetModel> InvalidationTargets { get; } = invalidationTargets;
 
     public bool Equals(CacheMethodModel? other)
     {
@@ -106,8 +59,7 @@ public sealed class CacheMethodModel(
                LocalTtlSeconds == other.LocalTtlSeconds &&
                DistributedTtlSeconds == other.DistributedTtlSeconds &&
                Tags.Equals(other.Tags) &&
-               Parameters.Equals(other.Parameters) &&
-               InvalidationTargets.Equals(other.InvalidationTargets);
+               Parameters.Equals(other.Parameters);
     }
 
     public override bool Equals(object? obj) => Equals(obj as CacheMethodModel);

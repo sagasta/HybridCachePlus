@@ -71,8 +71,54 @@ public static class GeneratorTestHelper
     /// </summary>
     public static (ImmutableArray<Diagnostic> GeneratorDiagnostics, ImmutableArray<Diagnostic> CompilationErrors, ImmutableArray<GeneratedSourceResult> GeneratedSources) RunGeneratorAndCompile(string sourceCode)
     {
-        var syntaxTree = CSharpSyntaxTree.ParseText(sourceCode, path: "Contracts.cs");
+        var compilation = CreateCompilation(CSharpSyntaxTree.ParseText(sourceCode, path: "Contracts.cs"));
 
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(new HybridCachePlusGenerator());
+        driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out var outputCompilation, out var generatorDiagnostics);
+
+        var generatedSources = driver.GetRunResult().Results
+            .Where(r => !r.GeneratedSources.IsDefault)
+            .SelectMany(r => r.GeneratedSources)
+            .ToImmutableArray();
+
+        var compilationErrors = outputCompilation.GetDiagnostics()
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .ToImmutableArray();
+
+        return (generatorDiagnostics, compilationErrors, generatedSources);
+    }
+
+    /// <summary>
+    /// Runs the generator, edits an unrelated file, runs it again and returns the tracked output steps of the second run.
+    /// An incremental generator must report every output step as Cached/Unchanged.
+    /// </summary>
+    public static ImmutableArray<IncrementalGeneratorRunStepOutput> RunTwiceWithUnrelatedEdit(string sourceCode)
+    {
+        var unrelated = CSharpSyntaxTree.ParseText("namespace TestApp { public class Unrelated { } }", path: "Unrelated.cs");
+        var compilation = CreateCompilation(CSharpSyntaxTree.ParseText(sourceCode, path: "Contracts.cs"), unrelated);
+
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new HybridCachePlusGenerator().AsSourceGenerator()],
+            driverOptions: new GeneratorDriverOptions(IncrementalGeneratorOutputKind.None, trackIncrementalGeneratorSteps: true));
+        driver = driver.RunGenerators(compilation);
+
+        var edited = compilation.ReplaceSyntaxTree(
+            unrelated,
+            CSharpSyntaxTree.ParseText("namespace TestApp { public class Unrelated { public int X { get; set; } } }", path: "Unrelated.cs"));
+        driver = driver.RunGenerators(edited);
+
+        return driver.GetRunResult().Results
+            .SelectMany(r => r.TrackedOutputSteps)
+            .SelectMany(kv => kv.Value)
+            .SelectMany(step => step.Outputs)
+            .Select(o => new IncrementalGeneratorRunStepOutput(o.Reason))
+            .ToImmutableArray();
+    }
+
+    public readonly record struct IncrementalGeneratorRunStepOutput(IncrementalStepRunReason Reason);
+
+    private static CSharpCompilation CreateCompilation(params SyntaxTree[] syntaxTrees)
+    {
         var trustedPlatformAssemblies = ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? "")
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
 
@@ -88,24 +134,10 @@ public static class GeneratorTestHelper
             .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path))
             .ToList();
 
-        var compilation = CSharpCompilation.Create(
+        return CSharpCompilation.Create(
             assemblyName: "TestsAssembly",
-            syntaxTrees: [syntaxTree],
+            syntaxTrees: syntaxTrees,
             references: references,
             options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
-
-        GeneratorDriver driver = CSharpGeneratorDriver.Create(new HybridCachePlusGenerator());
-        driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out var outputCompilation, out var generatorDiagnostics);
-
-        var generatedSources = driver.GetRunResult().Results
-            .Where(r => !r.GeneratedSources.IsDefault)
-            .SelectMany(r => r.GeneratedSources)
-            .ToImmutableArray();
-
-        var compilationErrors = outputCompilation.GetDiagnostics()
-            .Where(d => d.Severity == DiagnosticSeverity.Error)
-            .ToImmutableArray();
-
-        return (generatorDiagnostics, compilationErrors, generatedSources);
     }
 }

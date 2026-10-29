@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -17,19 +18,28 @@ public sealed class RedisEvictionBackplaneWorker : BackgroundService
     private readonly RedisBackplaneOptions _options;
     private readonly ILogger<RedisEvictionBackplaneWorker> _logger;
     private readonly RedisChannel _channel;
+    private readonly IMemoryCache? _localCache;
 
     public RedisEvictionBackplaneWorker(
         IConnectionMultiplexer multiplexer,
         global::Microsoft.Extensions.Caching.Hybrid.HybridCache cache,
         IOptions<RedisBackplaneOptions> options,
-        ILogger<RedisEvictionBackplaneWorker> logger)
+        ILogger<RedisEvictionBackplaneWorker> logger,
+        IMemoryCache? memoryCache = null)
     {
         _multiplexer = multiplexer ?? throw new ArgumentNullException(nameof(multiplexer));
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
         _options = options.Value ?? throw new ArgumentNullException(nameof(options));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _channel = RedisChannel.Literal(_options.ChannelName);
+
+        // The default HybridCache stores its L1 entries in the DI IMemoryCache under the plain key,
+        // which lets remote evictions skip the redundant L2 delete. Any other implementation falls back to RemoveAsync.
+        _localCache = _options.EvictLocalCacheOnly && IsDefaultHybridCache(cache) ? memoryCache : null;
     }
+
+    private static bool IsDefaultHybridCache(global::Microsoft.Extensions.Caching.Hybrid.HybridCache cache) =>
+        cache.GetType().FullName == "Microsoft.Extensions.Caching.Hybrid.Internal.DefaultHybridCache";
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -70,7 +80,14 @@ public sealed class RedisEvictionBackplaneWorker : BackgroundService
                         // Purge local L1 cache
                         if (message.EvictType == EvictType.ByExactKey)
                         {
-                            await _cache.RemoveAsync(message.Target, CancellationToken.None).ConfigureAwait(false);
+                            if (_localCache != null)
+                            {
+                                _localCache.Remove(message.Target);
+                            }
+                            else
+                            {
+                                await _cache.RemoveAsync(message.Target, CancellationToken.None).ConfigureAwait(false);
+                            }
                         }
                         else if (message.EvictType == EvictType.ByTag)
                         {

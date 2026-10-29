@@ -179,6 +179,8 @@ With **`HybridCache.Plus.Backplane.Redis`**:
 - Reflection-free serialization using pre-compiled **Native AOT** `JsonSerializerContext`.
 - Automatic echo cancellation (`OriginInstanceId == CurrentInstanceId`).
 - Background worker (`RedisEvictionBackplaneWorker`) instantly purges the local L1 cache on all receiving replicas.
+- Receivers drop **only their L1 copy** of an evicted key (`EvictLocalCacheOnly`, default `true`): the origin already deleted it from L2, so replicas don't repeat the Redis delete. Tag evictions still go through `RemoveByTagAsync`.
+- An `IConnectionMultiplexer` you already registered (e.g. Aspire's `AddRedisClient`) is reused instead of opening a new connection.
 
 ---
 
@@ -241,6 +243,13 @@ Adjust or override `LocalTtlSeconds` and `DistributedTtlSeconds` dynamically fro
 }
 ```
 
+Bind that section in `AddHybridCachePlus`. Changes to `appsettings.json` are picked up at runtime, without restarting:
+
+```csharp
+builder.Services.AddHybridCachePlus(plus =>
+    plus.ConfigurePolicies(builder.Configuration.GetSection("HybridCachePlus")));
+```
+
 Or programmatically in `AddHybridCachePlus`:
 
 ```csharp
@@ -253,6 +262,7 @@ services.AddHybridCachePlus(builder =>
 
 - **Cascading Fallback**: Tenant-specific policy ➔ Tenant default ➔ Global policy ➔ Global default ➔ Attribute values.
 - **Zero-Allocation Hot Path**: Pre-computes `HybridCacheEntryOptions` instances for $O(1)$ lookups during cache access.
+- **Per-host isolation**: each `HybridCache` instance resolves the policies of its own host, so several hosts in one process (e.g. `WebApplicationFactory` tests) don't overwrite each other. Policies are activated when the host starts; in apps without a generic host, resolve `HybridCachePlusPolicyRegistry` once from the service provider.
 
 ---
 

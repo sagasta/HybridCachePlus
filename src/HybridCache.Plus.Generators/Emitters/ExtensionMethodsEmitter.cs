@@ -93,7 +93,7 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine($"            CancellationToken cancellationToken = default)");
         sb.AppendLine("        {");
         sb.AppendLine($"            string cacheKey = {formatKeyMethodName}({string.Join(", ", method.Parameters.Select(p => p.Name))});");
-        sb.AppendLine($"            options ??= global::HybridCache.Plus.Policies.HybridCachePlusPolicyRegistry.Resolve(\"{policyLiteral}\", {tenantArg}, {optionsFieldName});");
+        sb.AppendLine($"            options ??= global::HybridCache.Plus.Policies.HybridCachePlusPolicyRegistry.Resolve(cache, \"{policyLiteral}\", {tenantArg}, {optionsFieldName});");
 
         if (method.Tags.Count > 0)
         {
@@ -151,7 +151,7 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine($"            CancellationToken cancellationToken = default)");
         sb.AppendLine("        {");
         sb.AppendLine($"            string cacheKey = {formatKeyMethodName}({string.Join(", ", method.Parameters.Select(p => p.Name))});");
-        sb.AppendLine($"            options ??= global::HybridCache.Plus.Policies.HybridCachePlusPolicyRegistry.Resolve(\"{policyLiteral}\", {tenantArg}, {optionsFieldName});");
+        sb.AppendLine($"            options ??= global::HybridCache.Plus.Policies.HybridCachePlusPolicyRegistry.Resolve(cache, \"{policyLiteral}\", {tenantArg}, {optionsFieldName});");
 
         if (method.Tags.Count > 0)
         {

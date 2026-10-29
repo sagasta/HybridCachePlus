@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Xunit;
@@ -276,12 +278,97 @@ public class RedisBackplaneIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task MultiInstance_RemoteEviction_PurgesOnlyLocalL1WithoutRedundantL2Deletes()
+    {
+        var broker = new InMemoryRedisBroker();
+        var sharedL2 = new CountingDistributedCache();
+        var (providerA, cacheA, _, _) = CreatePodInstance("pod-A", broker, sharedL2);
+        var (providerB, cacheB, _, _) = CreatePodInstance("pod-B", broker, sharedL2);
+        var (providerC, cacheC, _, _) = CreatePodInstance("pod-C", broker, sharedL2);
+
+        var hostedServices = new[] { providerA, providerB, providerC }
+            .SelectMany(p => p.GetServices<IHostedService>())
+            .ToList();
+        foreach (var svc in hostedServices) await svc.StartAsync(CancellationToken.None);
+
+        try
+        {
+            const string tenantId = "t_l1only";
+            const long productId = 7;
+            var calls = 0;
+            ValueTask<ProductDetailDto> Factory(CancellationToken _)
+            {
+                calls++;
+                return ValueTask.FromResult(new ProductDetailDto(tenantId, productId, $"Item-{calls}", 1m));
+            }
+
+            // Every pod ends up with the entry in its own L1
+            await cacheA.GetProductAsync(tenantId, productId, Factory);
+            await cacheB.GetProductAsync(tenantId, productId, Factory);
+            await cacheC.GetProductAsync(tenantId, productId, Factory);
+            Assert.Equal(1, calls);
+
+            await cacheA.EvictProductAsync(tenantId, productId);
+            await Task.Delay(250);
+
+            // Only the origin deletes from the shared L2; receivers just drop their L1 copy
+            Assert.Equal(1, sharedL2.RemoveCount);
+
+            var fromB = await cacheB.GetProductAsync(tenantId, productId, Factory);
+            Assert.Equal("Item-2", fromB.Name);
+
+            // Pod C's L1 was purged too: it now reads the fresh value that pod B wrote to L2
+            var fromC = await cacheC.GetProductAsync(tenantId, productId, Factory);
+            Assert.Equal("Item-2", fromC.Name);
+            Assert.Equal(2, calls);
+        }
+        finally
+        {
+            foreach (var svc in hostedServices) await svc.StopAsync(CancellationToken.None);
+            await providerA.DisposeAsync();
+            await providerB.DisposeAsync();
+            await providerC.DisposeAsync();
+        }
+    }
+
+    private sealed class CountingDistributedCache : IDistributedCache
+    {
+        private readonly MemoryDistributedCache _inner = new(Microsoft.Extensions.Options.Options.Create(new MemoryDistributedCacheOptions()));
+        private int _removeCount;
+
+        public int RemoveCount => Volatile.Read(ref _removeCount);
+
+        public byte[]? Get(string key) => _inner.Get(key);
+        public Task<byte[]?> GetAsync(string key, CancellationToken token = default) => _inner.GetAsync(key, token);
+        public void Set(string key, byte[] value, DistributedCacheEntryOptions options) => _inner.Set(key, value, options);
+        public Task SetAsync(string key, byte[] value, DistributedCacheEntryOptions options, CancellationToken token = default) => _inner.SetAsync(key, value, options, token);
+        public void Refresh(string key) => _inner.Refresh(key);
+        public Task RefreshAsync(string key, CancellationToken token = default) => _inner.RefreshAsync(key, token);
+
+        public void Remove(string key)
+        {
+            Interlocked.Increment(ref _removeCount);
+            _inner.Remove(key);
+        }
+
+        public Task RemoveAsync(string key, CancellationToken token = default)
+        {
+            Interlocked.Increment(ref _removeCount);
+            return _inner.RemoveAsync(key, token);
+        }
+    }
+
     private static (ServiceProvider Provider, global::Microsoft.Extensions.Caching.Hybrid.HybridCache Cache, IProductRepository Repo, ProductRepository InnerRepo)
-        CreatePodInstance(string instanceId, InMemoryRedisBroker broker)
+        CreatePodInstance(string instanceId, InMemoryRedisBroker broker, IDistributedCache? sharedL2 = null)
     {
         var services = new ServiceCollection();
 
         services.AddLogging();
+        if (sharedL2 != null)
+        {
+            services.AddSingleton(sharedL2);
+        }
         services.AddHybridCache();
 
         // Register HybridCache.Plus with Redis backplane

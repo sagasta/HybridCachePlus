@@ -240,7 +240,7 @@ public class GeneratorUnitTests
         Assert.NotNull(extensionSource.SourceText);
         var code = extensionSource.SourceText.ToString();
 
-        Assert.Contains("HybridCachePlusPolicyRegistry.Resolve(\"CustomOrderPolicy\"", code);
+        Assert.Contains("HybridCachePlusPolicyRegistry.Resolve(cache, \"CustomOrderPolicy\"", code);
     }
 
     [Fact]

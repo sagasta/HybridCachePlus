@@ -35,4 +35,13 @@ public sealed class RedisBackplaneOptions
     /// Optional Redis connection string used to create a connection if no multiplexer is provided.
     /// </summary>
     public string? Configuration { get; set; }
+
+    /// <summary>
+    /// When true (default), a remote key eviction only drops the entry from this instance's local L1 cache.
+    /// The origin instance has already removed it from L2, so deleting it again from every instance only adds
+    /// redundant Redis round-trips (and can delete a value another instance has just re-populated).
+    /// Applies to the default HybridCache implementation; other implementations always fall back to <c>RemoveAsync</c>.
+    /// Tag evictions always go through <c>RemoveByTagAsync</c>, as HybridCache exposes no L1-only tag invalidation.
+    /// </summary>
+    public bool EvictLocalCacheOnly { get; set; } = true;
 }

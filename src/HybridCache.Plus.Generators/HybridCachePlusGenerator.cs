@@ -45,28 +45,34 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
         var allResults = interfaceResults1.Collect().Combine(interfaceResults2.Collect()).Select(static (pair, _) =>
         {
             var seen = new HashSet<string>();
-            var builder = ImmutableArray.CreateBuilder<InterfaceExtractionResult>();
+            var unique = new List<InterfaceExtractionResult>();
             foreach (var r in pair.Left.Concat(pair.Right))
             {
-                var key = r.InterfaceModel != null
-                    ? $"{r.InterfaceModel.InterfaceNamespace}.{r.InterfaceModel.InterfaceName}"
-                    : r.GetHashCode().ToString();
-                if (seen.Add(key))
+                if (r.InterfaceModel != null &&
+                    seen.Add($"{r.InterfaceModel.InterfaceNamespace}.{r.InterfaceModel.InterfaceName}"))
                 {
-                    builder.Add(r);
+                    unique.Add(r);
                 }
             }
-            return builder.ToImmutable();
+            return new EquatableArray<InterfaceExtractionResult>(unique);
         });
 
         // 2. Output diagnostics, extension methods, and decorators
         context.RegisterSourceOutput(allResults, static (spc, results) =>
         {
+            var reported = new HashSet<DiagnosticInfo>();
+            var decoratorShapes = new Dictionary<string, DecoratorInterfaceModel>();
+            var evictionsByTarget = new Dictionary<string, List<PendingEvictionModel>>();
+
             foreach (var result in results)
             {
                 foreach (var diag in result.Diagnostics)
                 {
-                    spc.ReportDiagnostic(diag.ToDiagnostic());
+                    // Several contracts may point at the same mutating interface and report the same issue
+                    if (reported.Add(diag))
+                    {
+                        spc.ReportDiagnostic(diag.ToDiagnostic());
+                    }
                 }
 
                 if (result.InterfaceModel != null)
@@ -75,63 +81,93 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                     var hintName = $"{result.InterfaceModel.InterfaceName}HybridCacheExtensions.g.cs";
                     spc.AddSource(hintName, SourceText.From(source, Encoding.UTF8));
                 }
-            }
 
-            // Collect all invalidation targets
-            var invalidationsByInterface = new Dictionary<string, List<(InvalidationTargetModel Target, INamedTypeSymbol InterfaceSymbol)>>();
-
-            foreach (var result in results)
-            {
-                foreach (var item in result.PendingInvalidations)
+                foreach (var shape in result.DecoratorTargets)
                 {
-                    if (!invalidationsByInterface.TryGetValue(item.Target.InterfaceFullName, out var list))
+                    if (!decoratorShapes.ContainsKey(shape.InterfaceFullName))
+                    {
+                        decoratorShapes[shape.InterfaceFullName] = shape;
+                    }
+                }
+
+                foreach (var eviction in result.PendingEvictions)
+                {
+                    if (!evictionsByTarget.TryGetValue(eviction.InterfaceFullName, out var list))
                     {
                         list = [];
-                        invalidationsByInterface[item.Target.InterfaceFullName] = list;
+                        evictionsByTarget[eviction.InterfaceFullName] = list;
                     }
-                    list.Add(item);
+                    list.Add(eviction);
                 }
             }
 
             // Generate decorator for each target interface
-            foreach (var kvp in invalidationsByInterface)
+            foreach (var shape in decoratorShapes.Values)
             {
-                var targetList = kvp.Value;
-                if (targetList.Count == 0) continue;
+                evictionsByTarget.TryGetValue(shape.InterfaceFullName, out var pending);
+                var decoratorModel = MergeEvictions(shape, pending);
 
-                var targetInterfaceSymbol = targetList[0].InterfaceSymbol;
-                var decoratorDiagnostics = new List<Diagnostic>();
-                var decoratorModel = BuildDecoratorModel(targetInterfaceSymbol, [.. targetList.Select(t => t.Target)], decoratorDiagnostics);
+                // Emit Decorator Class
+                var decoratorSource = DecoratorEmitter.Emit(decoratorModel);
+                var decoratorHintName = $"{decoratorModel.DecoratorClassName}.g.cs";
+                spc.AddSource(decoratorHintName, SourceText.From(decoratorSource, Encoding.UTF8));
 
-                foreach (var diag in decoratorDiagnostics)
-                {
-                    spc.ReportDiagnostic(diag);
-                }
-
-                if (decoratorModel != null)
-                {
-                    // Emit Decorator Class
-                    var decoratorSource = DecoratorEmitter.Emit(decoratorModel);
-                    var decoratorHintName = $"{decoratorModel.DecoratorClassName}.g.cs";
-                    spc.AddSource(decoratorHintName, SourceText.From(decoratorSource, Encoding.UTF8));
-
-                    // Emit DI Registration
-                    var diSource = DiRegistrationEmitter.Emit(decoratorModel);
-                    var diHintName = $"{decoratorModel.DecoratorClassName}Extensions.g.cs";
-                    spc.AddSource(diHintName, SourceText.From(diSource, Encoding.UTF8));
-                }
+                // Emit DI Registration
+                var diSource = DiRegistrationEmitter.Emit(decoratorModel);
+                var diHintName = $"{decoratorModel.DecoratorClassName}Extensions.g.cs";
+                spc.AddSource(diHintName, SourceText.From(diSource, Encoding.UTF8));
             }
         });
+    }
+
+    private static DecoratorInterfaceModel MergeEvictions(DecoratorInterfaceModel shape, List<PendingEvictionModel>? pending)
+    {
+        if (pending == null || pending.Count == 0) return shape;
+
+        var methods = shape.Methods.Select(method =>
+        {
+            var contributed = pending
+                .Where(p => p.SignatureId == method.SignatureId)
+                .Select(p => p.Action)
+                .ToList();
+
+            if (contributed.Count == 0) return method;
+
+            // Contract evictions first, then the method's own [InvalidatesTag] evictions
+            return new DecoratorMethodModel(
+                method.SignatureId,
+                method.MethodName,
+                method.ReturnType,
+                method.ReturnsVoid,
+                method.IsAsync,
+                method.IsGenericTask,
+                method.GenericReturnType,
+                method.Parameters,
+                new EquatableArray<EvictionActionModel>(contributed.Concat(method.EvictionActions)));
+        });
+
+        return new DecoratorInterfaceModel(
+            shape.InterfaceNamespace,
+            shape.InterfaceName,
+            shape.InterfaceFullName,
+            shape.DecoratorClassName,
+            new EquatableArray<DecoratorMethodModel>(methods));
     }
 
     private static InterfaceExtractionResult ExtractInterface(GeneratorAttributeSyntaxContext ctx)
     {
         var diagnostics = new List<DiagnosticInfo>();
-        var pendingInvalidations = new List<(InvalidationTargetModel Target, INamedTypeSymbol InterfaceSymbol)>();
+        var decoratorTargets = new List<DecoratorInterfaceModel>();
+        var pendingEvictions = new List<PendingEvictionModel>();
+        var seenTargets = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
 
         if (ctx.TargetSymbol is not INamedTypeSymbol interfaceSymbol || interfaceSymbol.TypeKind != TypeKind.Interface)
         {
-            return new InterfaceExtractionResult(null, EquatableArray<DiagnosticInfo>.Empty, EquatableArray<(InvalidationTargetModel, INamedTypeSymbol)>.Empty);
+            return new InterfaceExtractionResult(
+                null,
+                EquatableArray<DiagnosticInfo>.Empty,
+                EquatableArray<DecoratorInterfaceModel>.Empty,
+                EquatableArray<PendingEvictionModel>.Empty);
         }
 
         var ns = interfaceSymbol.ContainingNamespace.IsGlobalNamespace
@@ -309,7 +345,6 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
             var tenantExpression = BuildTenantExpression(methodSymbol, templatePlaceholders);
 
             // Extract InvalidatedBy Attributes (both generic [InvalidatedBy<T>] and non-generic [InvalidatedBy(typeof(T))])
-            var invalidationTargets = new List<InvalidationTargetModel>();
             var invalidatedByAttrs = methodSymbol.GetAttributes().Where(a =>
                 a.AttributeClass != null &&
                 (a.AttributeClass.Name == "InvalidatedByAttribute" ||
@@ -356,36 +391,35 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                 }
 
                 var isInterface = targetTypeSymbol.TypeKind == TypeKind.Interface;
+                var targetFullName = targetTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
                 foreach (var targetMethodName in methodNames)
                 {
-                    var targetMethod = targetTypeSymbol.GetMembers(targetMethodName).OfType<IMethodSymbol>().FirstOrDefault();
+                    var targetOverloads = targetTypeSymbol.GetMembers(targetMethodName).OfType<IMethodSymbol>().ToList();
 
-                    if (!isInterface || targetMethod == null)
+                    if (!isInterface || targetOverloads.Count == 0)
                     {
                         diagnostics.Add(new DiagnosticInfo(
                             DiagnosticDescriptors.InvalidatedByTargetNotFound,
                             methodSymbol.Locations.FirstOrDefault(),
                             targetMethodName,
                             targetTypeSymbol.Name));
+                        continue;
                     }
-                    else
+
+                    if (seenTargets.Add(targetTypeSymbol))
                     {
-                        var targetNs = targetTypeSymbol.ContainingNamespace.IsGlobalNamespace
-                            ? ""
-                            : targetTypeSymbol.ContainingNamespace.ToDisplayString();
+                        decoratorTargets.Add(BuildDecoratorShape(targetTypeSymbol, diagnostics));
+                    }
 
-                        var targetModel = new InvalidationTargetModel(
-                            targetTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                            targetTypeSymbol.Name,
-                            targetNs,
-                            targetMethodName,
-                            methodSymbol.Name,
-                            template,
-                            new EquatableArray<string>(tagsList));
-
-                        invalidationTargets.Add(targetModel);
-                        pendingInvalidations.Add((targetModel, targetTypeSymbol));
+                    // Resolve this contract's raw key/tag templates against every overload of the mutating method
+                    foreach (var targetMethod in targetOverloads)
+                    {
+                        var action = BuildEvictionAction(template, tagsList, targetMethod, methodSymbol.Name, diagnostics);
+                        if (action != null)
+                        {
+                            pendingEvictions.Add(new PendingEvictionModel(targetFullName, GetSignatureId(targetMethod), action));
+                        }
                     }
                 }
             }
@@ -400,8 +434,7 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                 localTtl,
                 distributedTtl,
                 new EquatableArray<string>(resolvedTagsList),
-                new EquatableArray<ParameterModel>(parameters),
-                new EquatableArray<InvalidationTargetModel>(invalidationTargets)));
+                new EquatableArray<ParameterModel>(parameters)));
         }
 
         var interfaceModel = new CacheInterfaceModel(
@@ -412,13 +445,76 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
         return new InterfaceExtractionResult(
             interfaceModel,
             new EquatableArray<DiagnosticInfo>(diagnostics),
-            new EquatableArray<(InvalidationTargetModel, INamedTypeSymbol)>(pendingInvalidations));
+            new EquatableArray<DecoratorInterfaceModel>(decoratorTargets),
+            new EquatableArray<PendingEvictionModel>(pendingEvictions));
     }
 
-    private static DecoratorInterfaceModel BuildDecoratorModel(
+    private static string GetSignatureId(IMethodSymbol method) =>
+        method.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
+
+    /// <summary>
+    /// Re-resolves a contract's raw key/tag templates against the mutating method's own parameters.
+    /// Anything that cannot be resolved is reported (HCP005) and skipped instead of emitting uncompilable code.
+    /// </summary>
+    private static EvictionActionModel? BuildEvictionAction(
+        string keyTemplate,
+        List<string> tagTemplates,
+        IMethodSymbol targetMethod,
+        string cacheMethodName,
+        List<DiagnosticInfo> diagnostics)
+    {
+        var resolvedKey = string.Empty;
+        if (TryResolveTemplate(keyTemplate, targetMethod.Parameters, out var keyExpr, out var missingKey))
+        {
+            resolvedKey = keyExpr;
+        }
+        else
+        {
+            ReportUnresolvedPlaceholders(missingKey, cacheMethodName, targetMethod, diagnostics);
+        }
+
+        var resolvedTags = new List<string>();
+        foreach (var tag in tagTemplates)
+        {
+            if (TryResolveTemplate(tag, targetMethod.Parameters, out var tagExpr, out var missingTag))
+            {
+                resolvedTags.Add(tagExpr);
+            }
+            else
+            {
+                ReportUnresolvedPlaceholders(missingTag, cacheMethodName, targetMethod, diagnostics);
+            }
+        }
+
+        return resolvedKey.Length > 0 || resolvedTags.Count > 0
+            ? new EvictionActionModel(resolvedKey, new EquatableArray<string>(resolvedTags))
+            : null;
+    }
+
+    private static void ReportUnresolvedPlaceholders(
+        List<string> missingPlaceholders,
+        string cacheMethodName,
+        IMethodSymbol targetMethod,
+        List<DiagnosticInfo> diagnostics)
+    {
+        foreach (var placeholder in missingPlaceholders)
+        {
+            diagnostics.Add(new DiagnosticInfo(
+                DiagnosticDescriptors.UnresolvedInvalidationPlaceholder,
+                targetMethod.Locations.FirstOrDefault(),
+                placeholder,
+                cacheMethodName,
+                targetMethod.Name));
+        }
+    }
+
+    /// <summary>
+    /// Captures the mutating interface's shape (all methods, plus their own [InvalidatesTag] evictions)
+    /// as a symbol-free model; contract evictions are merged in later by <see cref="MergeEvictions"/>.
+    /// </summary>
+    private static DecoratorInterfaceModel BuildDecoratorShape(
         INamedTypeSymbol targetInterfaceSymbol,
-        List<InvalidationTargetModel> invalidations,
-        List<Diagnostic> diagnostics)
+        List<DiagnosticInfo> diagnostics)
     {
         var ns = targetInterfaceSymbol.ContainingNamespace.IsGlobalNamespace
             ? ""
@@ -464,91 +560,34 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                     isCt));
             }
 
-            // Find matching invalidations for this method
-            var matchingInvalidations = invalidations.Where(inv =>
-                string.Equals(inv.MethodName, method.Name, StringComparison.Ordinal)).ToList();
-
             var evictionActions = new List<EvictionActionModel>();
-            var methodLocation = method.Locations.FirstOrDefault();
 
-            foreach (var inv in matchingInvalidations)
+            // Check direct [InvalidatesTag] attributes on this method
+            var directTags = new List<string>();
+            foreach (var attr in method.GetAttributes())
             {
-                // Templates are re-resolved from their raw placeholders against the mutating method's own parameters.
-                // Anything that cannot be resolved is reported (HCP005) and skipped instead of emitting uncompilable code.
-                var resolvedKey = string.Empty;
-                if (TryResolveTemplate(inv.KeyTemplate, method.Parameters, out var keyExpr, out var missingKey))
-                {
-                    resolvedKey = keyExpr;
-                }
-                else
-                {
-                    ReportUnresolved(missingKey, inv.CacheMethodName);
-                }
-
-                var resolvedTags = new List<string>();
-                foreach (var tag in inv.TagTemplates)
+                if (attr.AttributeClass is { Name: "InvalidatesTagAttribute" or "InvalidatesTag" } &&
+                    attr.ConstructorArguments.Length > 0 &&
+                    attr.ConstructorArguments[0].Value is string tag &&
+                    !string.IsNullOrWhiteSpace(tag))
                 {
                     if (TryResolveTemplate(tag, method.Parameters, out var tagExpr, out var missingTag))
                     {
-                        resolvedTags.Add(tagExpr);
+                        directTags.Add(tagExpr);
                     }
                     else
                     {
-                        ReportUnresolved(missingTag, inv.CacheMethodName);
+                        ReportUnresolvedPlaceholders(missingTag, "[InvalidatesTag]", method, diagnostics);
                     }
                 }
-
-                if (resolvedKey.Length > 0 || resolvedTags.Count > 0)
-                {
-                    evictionActions.Add(new EvictionActionModel(resolvedKey, new EquatableArray<string>(resolvedTags)));
-                }
             }
-
-            // Check direct [InvalidatesTag] attributes on this method
-            var directTagAttrs = method.GetAttributes().Where(a =>
-                a.AttributeClass != null &&
-                (a.AttributeClass.Name == "InvalidatesTagAttribute" ||
-                 a.AttributeClass.Name == "InvalidatesTag")).ToList();
-
-            if (directTagAttrs.Count > 0)
+            if (directTags.Count > 0)
             {
-                var directTags = new List<string>();
-                foreach (var attr in directTagAttrs)
-                {
-                    if (attr.ConstructorArguments.Length > 0 &&
-                        attr.ConstructorArguments[0].Value is string tag &&
-                        !string.IsNullOrWhiteSpace(tag))
-                    {
-                        if (TryResolveTemplate(tag, method.Parameters, out var tagExpr, out var missingTag))
-                        {
-                            directTags.Add(tagExpr);
-                        }
-                        else
-                        {
-                            ReportUnresolved(missingTag, "[InvalidatesTag]");
-                        }
-                    }
-                }
-                if (directTags.Count > 0)
-                {
-                    evictionActions.Add(new EvictionActionModel(string.Empty, new EquatableArray<string>(directTags)));
-                }
-            }
-
-            void ReportUnresolved(List<string> missingPlaceholders, string cacheMethodName)
-            {
-                foreach (var placeholder in missingPlaceholders)
-                {
-                    diagnostics.Add(Diagnostic.Create(
-                        DiagnosticDescriptors.UnresolvedInvalidationPlaceholder,
-                        methodLocation,
-                        placeholder,
-                        cacheMethodName,
-                        method.Name));
-                }
+                evictionActions.Add(new EvictionActionModel(string.Empty, new EquatableArray<string>(directTags)));
             }
 
             methods.Add(new DecoratorMethodModel(
+                GetSignatureId(method),
                 method.Name,
                 returnTypeStr,
                 returnsVoid,
@@ -756,32 +795,4 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
             current = current.BaseType;
         }
     }
-
-    private sealed class InterfaceExtractionResultComparer : IEqualityComparer<InterfaceExtractionResult>
-    {
-        public static readonly InterfaceExtractionResultComparer Instance = new();
-
-        public bool Equals(InterfaceExtractionResult x, InterfaceExtractionResult y)
-        {
-            if (ReferenceEquals(x, y)) return true;
-            if (x is null || y is null) return false;
-            return Equals(x.InterfaceModel, y.InterfaceModel) &&
-                   x.Diagnostics.Equals(y.Diagnostics);
-        }
-
-        public int GetHashCode(InterfaceExtractionResult obj)
-        {
-            return (obj.InterfaceModel?.GetHashCode() ?? 0) ^ obj.Diagnostics.GetHashCode();
-        }
-    }
-}
-
-public sealed class InterfaceExtractionResult(
-    CacheInterfaceModel? interfaceModel,
-    EquatableArray<DiagnosticInfo> diagnostics,
-    EquatableArray<(InvalidationTargetModel, INamedTypeSymbol)> pendingInvalidations)
-{
-    public CacheInterfaceModel? InterfaceModel { get; } = interfaceModel;
-    public EquatableArray<DiagnosticInfo> Diagnostics { get; } = diagnostics;
-    public EquatableArray<(InvalidationTargetModel Target, INamedTypeSymbol InterfaceSymbol)> PendingInvalidations { get; } = pendingInvalidations;
 }

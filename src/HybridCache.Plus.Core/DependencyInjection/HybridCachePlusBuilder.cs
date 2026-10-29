@@ -1,5 +1,6 @@
 using HybridCache.Plus.Options;
 using HybridCache.Plus.Policies;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace HybridCache.Plus;
@@ -35,6 +36,19 @@ public sealed class HybridCachePlusBuilder(IServiceCollection services)
         ArgumentNullException.ThrowIfNull(configure);
         configure(_policyOptions);
         Services.Configure(configure);
+        HybridCachePlusPolicyRegistry.Current = new HybridCachePlusPolicyRegistry(_policyOptions);
+        return this;
+    }
+
+    /// <summary>
+    /// Binds global, method, and multi-tenant cache policies from configuration (e.g. <c>configuration.GetSection("HybridCachePlus")</c>).
+    /// Changes to a reloadable source such as <c>appsettings.json</c> are applied at runtime without restarting.
+    /// </summary>
+    public HybridCachePlusBuilder ConfigurePolicies(IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        configuration.Bind(_policyOptions);
+        Services.Configure<HybridCachePlusPolicyOptions>(configuration);
         HybridCachePlusPolicyRegistry.Current = new HybridCachePlusPolicyRegistry(_policyOptions);
         return this;
     }
