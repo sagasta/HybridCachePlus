@@ -14,7 +14,7 @@ public sealed class HybridCachePlusPolicyRegistry(HybridCachePlusPolicyOptions o
     private static volatile ITenantContextAccessor? _ambientTenantAccessor;
 
     private readonly HybridCachePlusPolicyOptions _options = options ?? throw new ArgumentNullException(nameof(options));
-    private readonly ConcurrentDictionary<string, HybridCacheEntryOptions> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<ResolutionKey, HybridCacheEntryOptions> _cache = new();
 
     /// <summary>
     /// Gets or sets the globally active policy registry instance.
@@ -59,12 +59,28 @@ public sealed class HybridCachePlusPolicyRegistry(HybridCachePlusPolicyOptions o
             ? tenantId
             : _ambientTenantAccessor?.CurrentTenantId;
 
-        var cacheKey = !string.IsNullOrEmpty(effectiveTenantId)
-            ? $"tenant:{effectiveTenantId}:{policyName}"
-            : $"global:{policyName}";
+        // Only tenants with configured overrides get their own entry; every other tenant shares the global
+        // resolution, so the memoization stays bounded no matter how many tenant identifiers are seen.
+        if (string.IsNullOrEmpty(effectiveTenantId) || !_options.Tenants.ContainsKey(effectiveTenantId))
+        {
+            effectiveTenantId = null;
+        }
 
-        return _cache.GetOrAdd(cacheKey, _ => ComputeOptions(policyName, effectiveTenantId, fallback));
+        // The fallback (compiled attribute TTLs) is part of the key: several methods may share a policy name
+        // while declaring different defaults, and each must keep its own.
+        var key = new ResolutionKey(policyName, effectiveTenantId, fallback.LocalCacheExpiration, fallback.Expiration, fallback.Flags);
+
+        return _cache.TryGetValue(key, out var resolved)
+            ? resolved
+            : _cache.GetOrAdd(key, ComputeOptions(policyName, effectiveTenantId, fallback));
     }
+
+    private readonly record struct ResolutionKey(
+        string PolicyName,
+        string? TenantId,
+        TimeSpan? LocalCacheExpiration,
+        TimeSpan? Expiration,
+        HybridCacheEntryFlags? Flags);
 
     private HybridCacheEntryOptions ComputeOptions(
         string policyName,

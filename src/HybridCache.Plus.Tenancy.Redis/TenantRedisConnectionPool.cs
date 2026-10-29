@@ -28,7 +28,9 @@ public sealed class TenantRedisConnectionPool(
 {
     private readonly MultiTenantRedisOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     private readonly IServiceProvider _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
-    private readonly ConcurrentDictionary<string, IDistributedCache> _caches = new(StringComparer.OrdinalIgnoreCase);
+    // Lazy guarantees a single CreateCacheForTenant call per tenant: ConcurrentDictionary.GetOrAdd may run its
+    // factory concurrently, which would open (and leak) several multiplexers for the same tenant.
+    private readonly ConcurrentDictionary<string, Lazy<IDistributedCache>> _caches = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, IConnectionMultiplexer> _ownedMultiplexers = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
@@ -41,7 +43,23 @@ public sealed class TenantRedisConnectionPool(
             ? _options.DefaultTenantId
             : tenantId;
 
-        return _caches.GetOrAdd(normalizedTenantId, CreateCacheForTenant);
+        var lazyCache = _caches.GetOrAdd(
+            normalizedTenantId,
+            static (id, pool) => new Lazy<IDistributedCache>(
+                () => pool.CreateCacheForTenant(id),
+                LazyThreadSafetyMode.ExecutionAndPublication),
+            this);
+
+        try
+        {
+            return lazyCache.Value;
+        }
+        catch
+        {
+            // Do not cache failures forever; the next call retries the resolution.
+            _caches.TryRemove(new KeyValuePair<string, Lazy<IDistributedCache>>(normalizedTenantId, lazyCache));
+            throw;
+        }
     }
 
     private IDistributedCache CreateCacheForTenant(string tenantId)
@@ -75,7 +93,7 @@ public sealed class TenantRedisConnectionPool(
                 var config = ConfigurationOptions.Parse(connStr!);
                 config.AbortOnConnectFail = false;
                 var mux = ConnectionMultiplexer.Connect(config);
-                _ownedMultiplexers[tenantId] = mux;
+                _ownedMultiplexers.TryAdd(tenantId, mux);
                 return CreateRedisCacheFromMultiplexer(mux, tenantId);
             }
         }

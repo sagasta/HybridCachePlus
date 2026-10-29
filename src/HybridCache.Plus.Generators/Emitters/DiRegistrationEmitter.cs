@@ -20,9 +20,7 @@ public static class DiRegistrationEmitter
         }
 
         var indent = string.IsNullOrEmpty(model.InterfaceNamespace) ? "" : "    ";
-        var cleanInterfaceName = model.InterfaceName.StartsWith("I") && model.InterfaceName.Length > 1
-            ? model.InterfaceName.Substring(1)
-            : model.InterfaceName;
+        var cleanInterfaceName = EmitterHelpers.StripInterfacePrefix(model.InterfaceName);
 
         var extensionsClassName = $"{cleanInterfaceName}CacheDecoratorExtensions";
 
@@ -41,7 +39,7 @@ public static class DiRegistrationEmitter
         sb.AppendLine($"{indent}        for (int i = services.Count - 1; i >= 0; i--)");
         sb.AppendLine($"{indent}        {{");
         sb.AppendLine($"{indent}            var descriptor = services[i];");
-        sb.AppendLine($"{indent}            if (descriptor.ServiceType == typeof({model.InterfaceFullName}))");
+        sb.AppendLine($"{indent}            if (descriptor.ServiceType == typeof({model.InterfaceFullName}) && !descriptor.IsKeyedService)");
         sb.AppendLine($"{indent}            {{");
         sb.AppendLine($"{indent}                if (descriptor.ImplementationType != null)");
         sb.AppendLine($"{indent}                {{");

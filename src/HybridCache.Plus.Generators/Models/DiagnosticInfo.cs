@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Text;
 
 namespace HybridCache.Plus.Generators.Models;
 
@@ -8,6 +9,7 @@ public sealed class DiagnosticInfo : IEquatable<DiagnosticInfo>
     public string? FilePath { get; }
     public int Start { get; }
     public int Length { get; }
+    public LinePositionSpan LineSpan { get; }
     public EquatableArray<string> MessageArgs { get; }
 
     public DiagnosticInfo(
@@ -21,6 +23,7 @@ public sealed class DiagnosticInfo : IEquatable<DiagnosticInfo>
             FilePath = location.SourceTree?.FilePath;
             Start = location.SourceSpan.Start;
             Length = location.SourceSpan.Length;
+            LineSpan = location.GetLineSpan().Span;
         }
         MessageArgs = [with(messageArgs)];
     }
@@ -30,8 +33,7 @@ public sealed class DiagnosticInfo : IEquatable<DiagnosticInfo>
         Location location;
         if (!string.IsNullOrEmpty(FilePath))
         {
-            var textSpan = new Microsoft.CodeAnalysis.Text.TextSpan(Start, Length);
-            location = Location.Create(FilePath!, textSpan, new Microsoft.CodeAnalysis.Text.LinePositionSpan());
+            location = Location.Create(FilePath!, new TextSpan(Start, Length), LineSpan);
         }
         else
         {

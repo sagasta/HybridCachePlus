@@ -55,8 +55,8 @@ public class GeneratorUnitTests
         Assert.NotNull(decoratorSource.SourceText);
         var decoratorCode = decoratorSource.SourceText.ToString();
         Assert.Contains("public sealed class ProductRepositoryCacheDecorator : global::TestApp.IProductRepository", decoratorCode);
-        Assert.Contains("await _cache.RemoveAsync($\"tenants:{tenantId}:products:{productId}\"", decoratorCode);
-        Assert.Contains("await _cache.RemoveByTagAsync($\"tenant:{tenantId}\"", decoratorCode);
+        Assert.Contains("CultureInfo.InvariantCulture, $\"tenants:{tenantId}:products:{productId}\"", decoratorCode);
+        Assert.Contains("CultureInfo.InvariantCulture, $\"tenant:{tenantId}\"", decoratorCode);
     }
 
     [Fact]
@@ -182,7 +182,7 @@ public class GeneratorUnitTests
         var code = decoratorSource.SourceText.ToString();
         Assert.Contains("UpdateProductAsync", code);
         Assert.Contains("DeleteProductAsync", code);
-        Assert.Contains("await _cache.RemoveAsync($\"tenants:{tenantId}:products:{productId}\"", code);
+        Assert.Contains("CultureInfo.InvariantCulture, $\"tenants:{tenantId}:products:{productId}\"", code);
     }
 
     [Fact]
@@ -338,7 +338,7 @@ public class GeneratorUnitTests
         Assert.NotNull(extensionSource.SourceText);
         var code = extensionSource.SourceText.ToString();
 
-        Assert.Contains("return $\"orders:{query.TenantId}:{query.OrderId}\";", code);
+        Assert.Contains("CultureInfo.InvariantCulture, $\"orders:{query.TenantId}:{query.OrderId}\")", code);
         Assert.Contains("$\"tenant:{query.TenantId}\"", code);
     }
 
@@ -372,7 +372,7 @@ public class GeneratorUnitTests
         Assert.NotNull(extensionSource.SourceText);
         var code = extensionSource.SourceText.ToString();
 
-        Assert.Contains("return $\"orders:{query.TenantId}:{query.OrderId}\";", code);
+        Assert.Contains("CultureInfo.InvariantCulture, $\"orders:{query.TenantId}:{query.OrderId}\")", code);
         Assert.Contains("$\"tenant:{query.TenantId}\"", code);
     }
 
@@ -411,8 +411,8 @@ public class GeneratorUnitTests
         Assert.NotNull(decoratorSource.SourceText);
         var code = decoratorSource.SourceText.ToString();
 
-        Assert.Contains("await _cache.RemoveAsync($\"orders:{command.TenantId}:{command.OrderId}\"", code);
-        Assert.Contains("await _cache.RemoveByTagAsync($\"tenant:{command.TenantId}\"", code);
+        Assert.Contains("CultureInfo.InvariantCulture, $\"orders:{command.TenantId}:{command.OrderId}\"", code);
+        Assert.Contains("CultureInfo.InvariantCulture, $\"tenant:{command.TenantId}\"", code);
     }
 
     [Fact]
@@ -451,6 +451,6 @@ public class GeneratorUnitTests
         Assert.NotNull(decoratorSource.SourceText);
         var code = decoratorSource.SourceText.ToString();
 
-        Assert.Contains("await _cache.RemoveByTagAsync($\"tenant:{command.TenantId}\"", code);
+        Assert.Contains("CultureInfo.InvariantCulture, $\"tenant:{command.TenantId}\"", code);
     }
 }

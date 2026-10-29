@@ -100,7 +100,13 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                 if (targetList.Count == 0) continue;
 
                 var targetInterfaceSymbol = targetList[0].InterfaceSymbol;
-                var decoratorModel = BuildDecoratorModel(targetInterfaceSymbol, [.. targetList.Select(t => t.Target)]);
+                var decoratorDiagnostics = new List<Diagnostic>();
+                var decoratorModel = BuildDecoratorModel(targetInterfaceSymbol, [.. targetList.Select(t => t.Target)], decoratorDiagnostics);
+
+                foreach (var diag in decoratorDiagnostics)
+                {
+                    spc.ReportDiagnostic(diag);
+                }
 
                 if (decoratorModel != null)
                 {
@@ -300,6 +306,8 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                 }
             }
 
+            var tenantExpression = BuildTenantExpression(methodSymbol, templatePlaceholders);
+
             // Extract InvalidatedBy Attributes (both generic [InvalidatedBy<T>] and non-generic [InvalidatedBy(typeof(T))])
             var invalidationTargets = new List<InvalidationTargetModel>();
             var invalidatedByAttrs = methodSymbol.GetAttributes().Where(a =>
@@ -372,8 +380,9 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                             targetTypeSymbol.Name,
                             targetNs,
                             targetMethodName,
-                            resolvedTemplate,
-                            new EquatableArray<string>(resolvedTagsList));
+                            methodSymbol.Name,
+                            template,
+                            new EquatableArray<string>(tagsList));
 
                         invalidationTargets.Add(targetModel);
                         pendingInvalidations.Add((targetModel, targetTypeSymbol));
@@ -387,6 +396,7 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                 isValueTask,
                 resolvedTemplate,
                 policyName,
+                tenantExpression,
                 localTtl,
                 distributedTtl,
                 new EquatableArray<string>(resolvedTagsList),
@@ -407,7 +417,8 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
 
     private static DecoratorInterfaceModel BuildDecoratorModel(
         INamedTypeSymbol targetInterfaceSymbol,
-        List<InvalidationTargetModel> invalidations)
+        List<InvalidationTargetModel> invalidations,
+        List<Diagnostic> diagnostics)
     {
         var ns = targetInterfaceSymbol.ContainingNamespace.IsGlobalNamespace
             ? ""
@@ -415,10 +426,7 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
         var interfaceName = targetInterfaceSymbol.Name;
         var fullName = targetInterfaceSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
-        var cleanName = interfaceName.StartsWith("I") && interfaceName.Length > 1
-            ? interfaceName.Substring(1)
-            : interfaceName;
-        var decoratorClassName = $"{cleanName}CacheDecorator";
+        var decoratorClassName = $"{EmitterHelpers.StripInterfacePrefix(interfaceName)}CacheDecorator";
 
         var methods = new List<DecoratorMethodModel>();
 
@@ -461,16 +469,39 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                 string.Equals(inv.MethodName, method.Name, StringComparison.Ordinal)).ToList();
 
             var evictionActions = new List<EvictionActionModel>();
+            var methodLocation = method.Locations.FirstOrDefault();
+
             foreach (var inv in matchingInvalidations)
             {
-                var resolvedKey = TemplateParser.ReplacePlaceholders(inv.KeyTemplate, ph =>
-                    TryResolvePlaceholder(ph, method.Parameters, out var res) ? res : null);
+                // Templates are re-resolved from their raw placeholders against the mutating method's own parameters.
+                // Anything that cannot be resolved is reported (HCP005) and skipped instead of emitting uncompilable code.
+                var resolvedKey = string.Empty;
+                if (TryResolveTemplate(inv.KeyTemplate, method.Parameters, out var keyExpr, out var missingKey))
+                {
+                    resolvedKey = keyExpr;
+                }
+                else
+                {
+                    ReportUnresolved(missingKey, inv.CacheMethodName);
+                }
 
-                var resolvedTags = inv.TagTemplates.Select(tag =>
-                    TemplateParser.ReplacePlaceholders(tag, ph =>
-                        TryResolvePlaceholder(ph, method.Parameters, out var res) ? res : null)).ToList();
+                var resolvedTags = new List<string>();
+                foreach (var tag in inv.TagTemplates)
+                {
+                    if (TryResolveTemplate(tag, method.Parameters, out var tagExpr, out var missingTag))
+                    {
+                        resolvedTags.Add(tagExpr);
+                    }
+                    else
+                    {
+                        ReportUnresolved(missingTag, inv.CacheMethodName);
+                    }
+                }
 
-                evictionActions.Add(new EvictionActionModel(resolvedKey, new EquatableArray<string>(resolvedTags)));
+                if (resolvedKey.Length > 0 || resolvedTags.Count > 0)
+                {
+                    evictionActions.Add(new EvictionActionModel(resolvedKey, new EquatableArray<string>(resolvedTags)));
+                }
             }
 
             // Check direct [InvalidatesTag] attributes on this method
@@ -488,14 +519,32 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                         attr.ConstructorArguments[0].Value is string tag &&
                         !string.IsNullOrWhiteSpace(tag))
                     {
-                        var resolvedTag = TemplateParser.ReplacePlaceholders(tag, ph =>
-                            TryResolvePlaceholder(ph, method.Parameters, out var res) ? res : null);
-                        directTags.Add(resolvedTag);
+                        if (TryResolveTemplate(tag, method.Parameters, out var tagExpr, out var missingTag))
+                        {
+                            directTags.Add(tagExpr);
+                        }
+                        else
+                        {
+                            ReportUnresolved(missingTag, "[InvalidatesTag]");
+                        }
                     }
                 }
                 if (directTags.Count > 0)
                 {
                     evictionActions.Add(new EvictionActionModel(string.Empty, new EquatableArray<string>(directTags)));
+                }
+            }
+
+            void ReportUnresolved(List<string> missingPlaceholders, string cacheMethodName)
+            {
+                foreach (var placeholder in missingPlaceholders)
+                {
+                    diagnostics.Add(Diagnostic.Create(
+                        DiagnosticDescriptors.UnresolvedInvalidationPlaceholder,
+                        methodLocation,
+                        placeholder,
+                        cacheMethodName,
+                        method.Name));
                 }
             }
 
@@ -518,12 +567,72 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
             new EquatableArray<DecoratorMethodModel>(methods));
     }
 
+    private static bool TryResolveTemplate(
+        string template,
+        ImmutableArray<IParameterSymbol> methodParameters,
+        out string resolvedTemplate,
+        out List<string> unresolvedPlaceholders)
+    {
+        var missing = new List<string>();
+        resolvedTemplate = TemplateParser.ReplacePlaceholders(template, ph =>
+        {
+            if (TryResolvePlaceholder(ph, methodParameters, out var res)) return res;
+            missing.Add(ph);
+            return null;
+        });
+        unresolvedPlaceholders = missing;
+        return missing.Count == 0;
+    }
+
+    /// <summary>
+    /// Builds a C# expression yielding the tenant identifier as <c>string?</c> for policy resolution and diagnostics.
+    /// Non-string tenant identifiers (int, Guid, ...) are converted with the invariant culture.
+    /// </summary>
+    private static string BuildTenantExpression(IMethodSymbol methodSymbol, List<string> templatePlaceholders)
+    {
+        var tenantParam = methodSymbol.Parameters.FirstOrDefault(p =>
+            string.Equals(p.Name, "tenantId", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(p.Name, "tenant", StringComparison.OrdinalIgnoreCase));
+
+        if (tenantParam != null)
+        {
+            return ToTenantString(tenantParam.Name, tenantParam.Type);
+        }
+
+        foreach (var placeholder in templatePlaceholders)
+        {
+            if (placeholder.IndexOf("tenant", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                TryResolvePlaceholder(placeholder, methodSymbol.Parameters, out var expression, out var type) &&
+                type != null)
+            {
+                return ToTenantString(expression, type);
+            }
+        }
+
+        return "null";
+
+        static string ToTenantString(string expression, ITypeSymbol type) =>
+            type.SpecialType == SpecialType.System_String
+                ? expression
+                : $"global::System.Convert.ToString((object?)({expression}), global::System.Globalization.CultureInfo.InvariantCulture)";
+    }
+
     private static bool TryResolvePlaceholder(
         string placeholder,
-        System.Collections.Immutable.ImmutableArray<IParameterSymbol> methodParameters,
+        ImmutableArray<IParameterSymbol> methodParameters,
         out string resolvedExpression)
     {
+        return TryResolvePlaceholder(placeholder, methodParameters, out resolvedExpression, out _);
+    }
+
+    private static bool TryResolvePlaceholder(
+        string placeholder,
+        ImmutableArray<IParameterSymbol> methodParameters,
+        out string resolvedExpression,
+        out ITypeSymbol? resolvedType)
+    {
         resolvedExpression = placeholder;
+        resolvedType = null;
 
         // 1. If placeholder has a dot, e.g. "query.TenantId" or "command.Product.Id"
         if (placeholder.Contains('.'))
@@ -553,6 +662,7 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
 
                 if (valid)
                 {
+                    resolvedType = currentType;
                     resolvedExpression = $"{param.Name}.{string.Join(".", parts.Skip(1))}";
                     return true;
                 }
@@ -569,6 +679,7 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
 
                 if (prop != null)
                 {
+                    resolvedType = prop.Type;
                     resolvedExpression = $"{p.Name}.{prop.Name}";
                     return true;
                 }
@@ -583,6 +694,7 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
 
         if (directParam != null)
         {
+            resolvedType = directParam.Type;
             resolvedExpression = directParam.Name;
             return true;
         }
@@ -597,6 +709,7 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
 
             if (prop != null)
             {
+                resolvedType = prop.Type;
                 resolvedExpression = $"{p.Name}.{prop.Name}";
                 return true;
             }
@@ -609,6 +722,7 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
 
                 if (idProp != null)
                 {
+                    resolvedType = idProp.Type;
                     resolvedExpression = $"{p.Name}.{idProp.Name}";
                     return true;
                 }

@@ -22,7 +22,7 @@ public static class ExtensionMethodsEmitter
             sb.AppendLine("{");
         }
 
-        var className = $"{model.InterfaceName.TrimStart('I')}HybridCacheExtensions";
+        var className = $"{EmitterHelpers.StripInterfacePrefix(model.InterfaceName)}HybridCacheExtensions";
 
         sb.AppendLine($"    public static partial class {className}");
         sb.AppendLine("    {");
@@ -46,14 +46,16 @@ public static class ExtensionMethodsEmitter
     {
         var paramSignature = string.Join(", ", method.Parameters.Select(p => $"{p.Type} {p.Name}"));
         var formatKeyMethodName = $"Format{GetBaseMethodName(method.MethodName)}Key";
+        var policyLiteral = EmitterHelpers.EscapeLiteral(method.PolicyName);
+        var templateLiteral = EmitterHelpers.EscapeLiteral(method.KeyTemplate);
 
         // 1. Static Key Formatter Method
         sb.AppendLine($"        /// <summary>");
-        sb.AppendLine($"        /// Formats the cache key for <see cref=\"{method.MethodName}\"/> without runtime allocations.");
+        sb.AppendLine($"        /// Formats the culture-invariant cache key for <see cref=\"{method.MethodName}\"/>.");
         sb.AppendLine($"        /// </summary>");
         sb.AppendLine($"        public static string {formatKeyMethodName}({paramSignature})");
         sb.AppendLine("        {");
-        sb.AppendLine($"            return $\"{method.KeyTemplate}\";");
+        sb.AppendLine($"            return {EmitterHelpers.InvariantInterpolation(method.KeyTemplate)};");
         sb.AppendLine("        }");
         sb.AppendLine();
 
@@ -78,23 +80,7 @@ public static class ExtensionMethodsEmitter
             ? ", " + string.Join(", ", method.Parameters.Select(p => $"{p.Type} {p.Name}"))
             : "";
 
-        var tenantParam = method.Parameters.FirstOrDefault(p =>
-            string.Equals(p.Name, "tenantId", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(p.Name, "tenant", StringComparison.OrdinalIgnoreCase));
-
-        string tenantArg;
-        if (tenantParam != null)
-        {
-            tenantArg = tenantParam.Name;
-        }
-        else
-        {
-            var placeholders = TemplateParser.ExtractPlaceholders(method.KeyTemplate);
-            var tenantPh = placeholders.FirstOrDefault(ph =>
-                ph.IndexOf("tenant", StringComparison.OrdinalIgnoreCase) >= 0 && ph.Contains('.'));
-
-            tenantArg = tenantPh != null ? $"{tenantPh}?.ToString()" : "null";
-        }
+        var tenantArg = method.TenantExpression;
 
         sb.AppendLine($"        /// <summary>");
         sb.AppendLine($"        /// Retrieves or creates an entry for {method.MethodName} in HybridCache using compiled typed keys and configurable policy TTLs.");
@@ -107,18 +93,18 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine($"            CancellationToken cancellationToken = default)");
         sb.AppendLine("        {");
         sb.AppendLine($"            string cacheKey = {formatKeyMethodName}({string.Join(", ", method.Parameters.Select(p => p.Name))});");
-        sb.AppendLine($"            options ??= global::HybridCache.Plus.Policies.HybridCachePlusPolicyRegistry.Resolve(\"{method.PolicyName}\", {tenantArg}, {optionsFieldName});");
+        sb.AppendLine($"            options ??= global::HybridCache.Plus.Policies.HybridCachePlusPolicyRegistry.Resolve(\"{policyLiteral}\", {tenantArg}, {optionsFieldName});");
 
         if (method.Tags.Count > 0)
         {
-            var tagInterpolations = method.Tags.Select(t => $"$\"{t}\"");
+            var tagInterpolations = method.Tags.Select(EmitterHelpers.InvariantInterpolation);
             sb.AppendLine($"            tags ??= new string[] {{ {string.Join(", ", tagInterpolations)} }};");
         }
 
         sb.AppendLine($"            if (global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.IsMetricsEnabled)");
         sb.AppendLine($"            {{");
         sb.AppendLine($"                var stopwatch = global::System.Diagnostics.Stopwatch.StartNew();");
-        sb.AppendLine($"                using var activity = global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.StartActivity(\"{method.MethodName}\", \"{method.PolicyName}\", {tenantArg});");
+        sb.AppendLine($"                using var activity = global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.StartActivity(\"{method.MethodName}\", \"{policyLiteral}\", {tenantArg});");
         sb.AppendLine($"                bool isMiss = false;");
         sb.AppendLine($"                var result = await cache.GetOrCreateAsync(");
         sb.AppendLine($"                    cacheKey,");
@@ -131,14 +117,14 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine($"                    tags,");
         sb.AppendLine($"                    cancellationToken).ConfigureAwait(false);");
         sb.AppendLine($"                stopwatch.Stop();");
-        sb.AppendLine($"                global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordDuration(stopwatch.Elapsed.TotalMilliseconds, \"GetOrCreate\", \"{method.PolicyName}\", {tenantArg});");
+        sb.AppendLine($"                global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordDuration(stopwatch.Elapsed.TotalMilliseconds, \"GetOrCreate\", \"{policyLiteral}\", {tenantArg});");
         sb.AppendLine($"                if (isMiss)");
         sb.AppendLine($"                {{");
-        sb.AppendLine($"                    global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordMiss(\"{method.PolicyName}\", {tenantArg}, \"{method.KeyTemplate}\");");
+        sb.AppendLine($"                    global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordMiss(\"{policyLiteral}\", {tenantArg}, \"{templateLiteral}\");");
         sb.AppendLine($"                }}");
         sb.AppendLine($"                else");
         sb.AppendLine($"                {{");
-        sb.AppendLine($"                    global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordHit(\"{method.PolicyName}\", {tenantArg}, \"{method.KeyTemplate}\");");
+        sb.AppendLine($"                    global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordHit(\"{policyLiteral}\", {tenantArg}, \"{templateLiteral}\");");
         sb.AppendLine($"                }}");
         sb.AppendLine($"                return result;");
         sb.AppendLine($"            }}");
@@ -165,18 +151,18 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine($"            CancellationToken cancellationToken = default)");
         sb.AppendLine("        {");
         sb.AppendLine($"            string cacheKey = {formatKeyMethodName}({string.Join(", ", method.Parameters.Select(p => p.Name))});");
-        sb.AppendLine($"            options ??= global::HybridCache.Plus.Policies.HybridCachePlusPolicyRegistry.Resolve(\"{method.PolicyName}\", {tenantArg}, {optionsFieldName});");
+        sb.AppendLine($"            options ??= global::HybridCache.Plus.Policies.HybridCachePlusPolicyRegistry.Resolve(\"{policyLiteral}\", {tenantArg}, {optionsFieldName});");
 
         if (method.Tags.Count > 0)
         {
-            var tagInterpolations = method.Tags.Select(t => $"$\"{t}\"");
+            var tagInterpolations = method.Tags.Select(EmitterHelpers.InvariantInterpolation);
             sb.AppendLine($"            tags ??= new string[] {{ {string.Join(", ", tagInterpolations)} }};");
         }
 
         sb.AppendLine($"            if (global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.IsMetricsEnabled)");
         sb.AppendLine($"            {{");
         sb.AppendLine($"                var stopwatch = global::System.Diagnostics.Stopwatch.StartNew();");
-        sb.AppendLine($"                using var activity = global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.StartActivity(\"{method.MethodName}\", \"{method.PolicyName}\", {tenantArg});");
+        sb.AppendLine($"                using var activity = global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.StartActivity(\"{method.MethodName}\", \"{policyLiteral}\", {tenantArg});");
         sb.AppendLine($"                bool isMiss = false;");
         sb.AppendLine($"                var result = await cache.GetOrCreateAsync(");
         sb.AppendLine($"                    cacheKey,");
@@ -190,14 +176,14 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine($"                    tags,");
         sb.AppendLine($"                    cancellationToken).ConfigureAwait(false);");
         sb.AppendLine($"                stopwatch.Stop();");
-        sb.AppendLine($"                global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordDuration(stopwatch.Elapsed.TotalMilliseconds, \"GetOrCreate\", \"{method.PolicyName}\", {tenantArg});");
+        sb.AppendLine($"                global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordDuration(stopwatch.Elapsed.TotalMilliseconds, \"GetOrCreate\", \"{policyLiteral}\", {tenantArg});");
         sb.AppendLine($"                if (isMiss)");
         sb.AppendLine($"                {{");
-        sb.AppendLine($"                    global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordMiss(\"{method.PolicyName}\", {tenantArg}, \"{method.KeyTemplate}\");");
+        sb.AppendLine($"                    global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordMiss(\"{policyLiteral}\", {tenantArg}, \"{templateLiteral}\");");
         sb.AppendLine($"                }}");
         sb.AppendLine($"                else");
         sb.AppendLine($"                {{");
-        sb.AppendLine($"                    global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordHit(\"{method.PolicyName}\", {tenantArg}, \"{method.KeyTemplate}\");");
+        sb.AppendLine($"                    global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordHit(\"{policyLiteral}\", {tenantArg}, \"{templateLiteral}\");");
         sb.AppendLine($"                }}");
         sb.AppendLine($"                return result;");
         sb.AppendLine($"            }}");
@@ -256,7 +242,7 @@ public static class ExtensionMethodsEmitter
             sb.AppendLine($"            this global::Microsoft.Extensions.Caching.Hybrid.HybridCache cache{tagParamSig},");
             sb.AppendLine($"            CancellationToken cancellationToken = default)");
             sb.AppendLine("        {");
-            sb.AppendLine($"            string tag = $\"{tag}\";");
+            sb.AppendLine($"            string tag = {EmitterHelpers.InvariantInterpolation(tag)};");
             sb.AppendLine($"            await cache.RemoveByTagAsync(tag, cancellationToken).ConfigureAwait(false);");
             sb.AppendLine($"            global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction(tag, \"ManualTagEvict\");");
             sb.AppendLine($"            var publisher = global::HybridCache.Plus.Backplane.HybridCachePlusBackplaneContext.GetPublisher(cache);");

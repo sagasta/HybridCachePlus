@@ -81,7 +81,7 @@ public static class HybridCachePlusDiagnostics
         {
             activity.SetTag("cache.operation", operation);
             activity.SetTag("cache.policy", policy);
-            if (tenant != null) activity.SetTag("cache.tenant", tenant);
+            if (!string.IsNullOrEmpty(tenant)) activity.SetTag("cache.tenant", tenant);
         }
         return activity;
     }
@@ -95,7 +95,7 @@ public static class HybridCachePlusDiagnostics
 
         s_hitsCounter.Add(1,
             new KeyValuePair<string, object?>("cache.policy", policy),
-            new KeyValuePair<string, object?>("cache.tenant", tenant ?? "none"),
+            new KeyValuePair<string, object?>("cache.tenant", TenantTag(tenant)),
             new KeyValuePair<string, object?>("cache.template", template));
     }
 
@@ -108,12 +108,13 @@ public static class HybridCachePlusDiagnostics
 
         s_missesCounter.Add(1,
             new KeyValuePair<string, object?>("cache.policy", policy),
-            new KeyValuePair<string, object?>("cache.tenant", tenant ?? "none"),
+            new KeyValuePair<string, object?>("cache.tenant", TenantTag(tenant)),
             new KeyValuePair<string, object?>("cache.template", template));
     }
 
     /// <summary>
     /// Records a cache eviction.
+    /// The key is intentionally not emitted as a metric dimension: cache keys are unbounded and would explode metric cardinality.
     /// </summary>
     public static void RecordEviction(string key, string reason, string? tenant = null)
     {
@@ -121,8 +122,7 @@ public static class HybridCachePlusDiagnostics
 
         s_evictionsCounter.Add(1,
             new KeyValuePair<string, object?>("eviction.reason", reason),
-            new KeyValuePair<string, object?>("cache.tenant", tenant ?? "none"),
-            new KeyValuePair<string, object?>("cache.key", key));
+            new KeyValuePair<string, object?>("cache.tenant", TenantTag(tenant)));
     }
 
     /// <summary>
@@ -133,8 +133,7 @@ public static class HybridCachePlusDiagnostics
         if (!IsEnabled || !s_backplanePublishedCounter.Enabled) return;
 
         s_backplanePublishedCounter.Add(1,
-            new KeyValuePair<string, object?>("cache.tenant", tenant ?? "none"),
-            new KeyValuePair<string, object?>("cache.key", key));
+            new KeyValuePair<string, object?>("cache.tenant", TenantTag(tenant)));
     }
 
     /// <summary>
@@ -145,8 +144,7 @@ public static class HybridCachePlusDiagnostics
         if (!IsEnabled || !s_backplaneReceivedCounter.Enabled) return;
 
         s_backplaneReceivedCounter.Add(1,
-            new KeyValuePair<string, object?>("cache.tenant", tenant ?? "none"),
-            new KeyValuePair<string, object?>("cache.key", key));
+            new KeyValuePair<string, object?>("cache.tenant", TenantTag(tenant)));
     }
 
     /// <summary>
@@ -159,6 +157,8 @@ public static class HybridCachePlusDiagnostics
         s_durationHistogram.Record(durationMs,
             new KeyValuePair<string, object?>("cache.operation", operation),
             new KeyValuePair<string, object?>("cache.policy", policy),
-            new KeyValuePair<string, object?>("cache.tenant", tenant ?? "none"));
+            new KeyValuePair<string, object?>("cache.tenant", TenantTag(tenant)));
     }
+
+    private static string TenantTag(string? tenant) => string.IsNullOrEmpty(tenant) ? "none" : tenant;
 }

@@ -211,4 +211,53 @@ public class PolicyRegistryTests
         Assert.Equal(TimeSpan.FromSeconds(12), resolved.LocalCacheExpiration);
         Assert.Equal(TimeSpan.FromSeconds(120), resolved.Expiration);
     }
+
+    [Fact]
+    public void Resolve_SharedPolicyNameWithDifferentFallbacks_KeepsEachCallSiteFallback()
+    {
+        // Two contract methods share PolicyName "Catalog" but declare different attribute TTLs.
+        var options = new HybridCachePlusPolicyOptions();
+        options.Policies["Catalog"] = new CachePolicyOptions { DistributedTtlSeconds = 900 };
+        var registry = new HybridCachePlusPolicyRegistry(options);
+
+        var productsFallback = new HybridCacheEntryOptions { LocalCacheExpiration = TimeSpan.FromSeconds(30) };
+        var categoriesFallback = new HybridCacheEntryOptions { LocalCacheExpiration = TimeSpan.FromSeconds(300) };
+
+        var products = registry.ResolveOptions("Catalog", null, productsFallback);
+        var categories = registry.ResolveOptions("Catalog", null, categoriesFallback);
+
+        Assert.Equal(TimeSpan.FromSeconds(30), products.LocalCacheExpiration);
+        Assert.Equal(TimeSpan.FromSeconds(300), categories.LocalCacheExpiration);
+        Assert.Equal(TimeSpan.FromSeconds(900), products.Expiration);
+        Assert.Equal(TimeSpan.FromSeconds(900), categories.Expiration);
+    }
+
+    [Fact]
+    public void Resolve_SharedPolicyNameWithoutOverrides_ReturnsEachCallSiteFallback()
+    {
+        var registry = new HybridCachePlusPolicyRegistry(new HybridCachePlusPolicyOptions());
+
+        var first = new HybridCacheEntryOptions { LocalCacheExpiration = TimeSpan.FromSeconds(30) };
+        var second = new HybridCacheEntryOptions { LocalCacheExpiration = TimeSpan.FromSeconds(300) };
+
+        Assert.Same(first, registry.ResolveOptions("Shared", "tenant_a", first));
+        Assert.Same(second, registry.ResolveOptions("Shared", "tenant_a", second));
+    }
+
+    [Fact]
+    public void Resolve_UnconfiguredTenants_ShareTheGlobalResolution()
+    {
+        var options = new HybridCachePlusPolicyOptions();
+        options.Policies["Orders"] = new CachePolicyOptions { LocalTtlSeconds = 45 };
+        var registry = new HybridCachePlusPolicyRegistry(options);
+        var fallback = new HybridCacheEntryOptions();
+
+        var global = registry.ResolveOptions("Orders", null, fallback);
+
+        // Tenants without overrides must not each get (and leak) their own cached entry.
+        for (var i = 0; i < 100; i++)
+        {
+            Assert.Same(global, registry.ResolveOptions("Orders", $"tenant_{i}", fallback));
+        }
+    }
 }

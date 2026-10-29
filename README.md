@@ -266,9 +266,9 @@ HybridCache.Plus includes built-in, production-grade observability powered by **
 |---|---|---|---|
 | **`hybridcache_plus.hits`** | Counter (`{hits}`) | Successful cache hits served from L1 or L2 without executing the database factory. | `cache.policy`, `cache.tenant`, `cache.template` |
 | **`hybridcache_plus.misses`** | Counter (`{misses}`) | Cache misses that triggered a factory execution against the database. | `cache.policy`, `cache.tenant`, `cache.template` |
-| **`hybridcache_plus.evictions`** | Counter (`{evictions}`) | Cache entries purged locally or remotely. | `eviction.reason` (`DecoratorMutation`, `Backplane`, `ManualEvict`), `cache.tenant`, `cache.key` |
-| **`hybridcache_plus.backplane.published`** | Counter (`{messages}`) | Eviction notices published across Redis Pub/Sub to invalidate remote pods. | `cache.tenant`, `cache.key` |
-| **`hybridcache_plus.backplane.received`** | Counter (`{messages}`) | Remote eviction notices received from other pods to purge local L1. | `cache.tenant`, `cache.key` |
+| **`hybridcache_plus.evictions`** | Counter (`{evictions}`) | Cache entries purged locally or remotely. | `eviction.reason` (`DecoratorMutation`, `Backplane`, `ManualEvict`), `cache.tenant` |
+| **`hybridcache_plus.backplane.published`** | Counter (`{messages}`) | Eviction notices published across Redis Pub/Sub to invalidate remote pods. | `cache.tenant` |
+| **`hybridcache_plus.backplane.received`** | Counter (`{messages}`) | Remote eviction notices received from other pods to purge local L1. | `cache.tenant` |
 | **`hybridcache_plus.duration`** | Histogram (`ms`) | Execution latency of cache operations in milliseconds. | `cache.operation`, `cache.policy`, `cache.tenant` |
 
 ### OpenTelemetry Setup
@@ -312,6 +312,7 @@ HybridCache.Plus enforces best practices at compile time:
 | **`HCP002`** | Error | The interface or method specified in `[InvalidatedBy]` does not exist or is inaccessible. |
 | **`HCP003`** | Error | The contract method decorated with `[CacheTemplate]` does not return `ValueTask<T>` or `Task<T>`. |
 | **`HCP004`** | Warning | The method declares a `tenantId` parameter but the key template omits `{tenantId}`, risking cross-tenant L1 collisions. |
+| **`HCP005`** | Warning | A mutating method referenced by `[InvalidatedBy]` (or carrying `[InvalidatesTag]`) cannot supply a placeholder needed to build the key or tag to evict; that eviction is skipped. |
 
 ---
 

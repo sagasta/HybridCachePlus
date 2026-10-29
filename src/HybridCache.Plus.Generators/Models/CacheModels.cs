@@ -23,6 +23,7 @@ public sealed class InvalidationTargetModel(
     string interfaceName,
     string interfaceNamespace,
     string methodName,
+    string cacheMethodName,
     string keyTemplate,
     EquatableArray<string> tagTemplates)
     : IEquatable<InvalidationTargetModel>
@@ -31,7 +32,20 @@ public sealed class InvalidationTargetModel(
     public string InterfaceName { get; } = interfaceName;
     public string InterfaceNamespace { get; } = interfaceNamespace;
     public string MethodName { get; } = methodName;
+
+    /// <summary>
+    /// The cached contract method whose entry is invalidated (used for diagnostics).
+    /// </summary>
+    public string CacheMethodName { get; } = cacheMethodName;
+
+    /// <summary>
+    /// The raw (unresolved) key template, re-resolved against the mutating method's parameters.
+    /// </summary>
     public string KeyTemplate { get; } = keyTemplate;
+
+    /// <summary>
+    /// The raw (unresolved) tag templates, re-resolved against the mutating method's parameters.
+    /// </summary>
     public EquatableArray<string> TagTemplates { get; } = tagTemplates;
 
     public bool Equals(InvalidationTargetModel? other)
@@ -40,6 +54,7 @@ public sealed class InvalidationTargetModel(
         if (ReferenceEquals(this, other)) return true;
         return InterfaceFullName == other.InterfaceFullName &&
                MethodName == other.MethodName &&
+               CacheMethodName == other.CacheMethodName &&
                KeyTemplate == other.KeyTemplate &&
                TagTemplates.Equals(other.TagTemplates);
     }
@@ -54,6 +69,7 @@ public sealed class CacheMethodModel(
     bool isValueTask,
     string keyTemplate,
     string policyName,
+    string tenantExpression,
     int localTtlSeconds,
     int distributedTtlSeconds,
     EquatableArray<string> tags,
@@ -66,6 +82,11 @@ public sealed class CacheMethodModel(
     public bool IsValueTask { get; } = isValueTask;
     public string KeyTemplate { get; } = keyTemplate;
     public string PolicyName { get; } = policyName;
+
+    /// <summary>
+    /// C# expression yielding the tenant identifier as <c>string?</c> (or the literal <c>null</c>).
+    /// </summary>
+    public string TenantExpression { get; } = tenantExpression;
     public int LocalTtlSeconds { get; } = localTtlSeconds;
     public int DistributedTtlSeconds { get; } = distributedTtlSeconds;
     public EquatableArray<string> Tags { get; } = tags;
@@ -81,6 +102,7 @@ public sealed class CacheMethodModel(
                IsValueTask == other.IsValueTask &&
                KeyTemplate == other.KeyTemplate &&
                PolicyName == other.PolicyName &&
+               TenantExpression == other.TenantExpression &&
                LocalTtlSeconds == other.LocalTtlSeconds &&
                DistributedTtlSeconds == other.DistributedTtlSeconds &&
                Tags.Equals(other.Tags) &&

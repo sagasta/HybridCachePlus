@@ -110,10 +110,10 @@ public class DiagnosticsTests
     }
 
     [Fact]
-    public void RecordEviction_EmitsMeasurement_WithReasonAndKey()
+    public void RecordEviction_EmitsMeasurement_WithReasonAndTenant_ButNotTheUnboundedKey()
     {
         HybridCachePlusDiagnostics.IsEnabled = true;
-        var evictions = new List<(long Value, string? Reason, string? Key)>();
+        var evictions = new List<(long Value, string? Reason, bool HasKeyTag)>();
 
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meterListener) =>
@@ -129,17 +129,19 @@ public class DiagnosticsTests
             if (instrument.Name == "hybridcache_plus.evictions")
             {
                 string? reason = null;
-                string? key = null;
+                string? tenant = null;
+                var hasKeyTag = false;
 
                 foreach (var tag in tags)
                 {
                     if (tag.Key == "eviction.reason") reason = tag.Value?.ToString();
-                    if (tag.Key == "cache.key") key = tag.Value?.ToString();
+                    if (tag.Key == "cache.tenant") tenant = tag.Value?.ToString();
+                    if (tag.Key == "cache.key") hasKeyTag = true;
                 }
 
-                if (key == "tenants:unique_evict_test:products:99")
+                if (tenant == "unique_evict_test_tenant")
                 {
-                    evictions.Add((measurement, reason, key));
+                    evictions.Add((measurement, reason, hasKeyTag));
                 }
             }
         });
@@ -147,12 +149,12 @@ public class DiagnosticsTests
         listener.Start();
 
         // Act
-        HybridCachePlusDiagnostics.RecordEviction("tenants:unique_evict_test:products:99", "DecoratorMutation", "t1");
+        HybridCachePlusDiagnostics.RecordEviction("tenants:unique_evict_test:products:99", "DecoratorMutation", "unique_evict_test_tenant");
 
         // Assert
         Assert.Single(evictions);
         Assert.Equal("DecoratorMutation", evictions[0].Reason);
-        Assert.Equal("tenants:unique_evict_test:products:99", evictions[0].Key);
+        Assert.False(evictions[0].HasKeyTag, "Cache keys must not be used as metric dimensions (unbounded cardinality).");
     }
 
     [Fact]

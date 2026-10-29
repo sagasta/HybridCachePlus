@@ -10,7 +10,7 @@ public static class GeneratorTestHelper
 {
     public static (ImmutableArray<Diagnostic> Diagnostics, ImmutableArray<GeneratedSourceResult> GeneratedSources) RunGenerator(string sourceCode)
     {
-        var syntaxTree = CSharpSyntaxTree.ParseText(sourceCode);
+        var syntaxTree = CSharpSyntaxTree.ParseText(sourceCode, path: "Contracts.cs");
 
         var references = new List<MetadataReference>
         {
@@ -63,5 +63,49 @@ public static class GeneratorTestHelper
         var allDiagnostics = diagnostics.AddRange(runResult.Diagnostics);
 
         return (allDiagnostics, generatedSources);
+    }
+
+    /// <summary>
+    /// Runs the generator and compiles its output against the full runtime, returning generator diagnostics
+    /// plus every compiler error of the resulting compilation (i.e. whether the generated code actually builds).
+    /// </summary>
+    public static (ImmutableArray<Diagnostic> GeneratorDiagnostics, ImmutableArray<Diagnostic> CompilationErrors, ImmutableArray<GeneratedSourceResult> GeneratedSources) RunGeneratorAndCompile(string sourceCode)
+    {
+        var syntaxTree = CSharpSyntaxTree.ParseText(sourceCode, path: "Contracts.cs");
+
+        var trustedPlatformAssemblies = ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? "")
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+
+        var references = trustedPlatformAssemblies
+            .Concat(
+            [
+                typeof(HybridCacheKeysAttribute).Assembly.Location,
+                typeof(Microsoft.Extensions.Caching.Hybrid.HybridCache).Assembly.Location,
+                typeof(Microsoft.Extensions.DependencyInjection.IServiceCollection).Assembly.Location,
+                typeof(Microsoft.Extensions.DependencyInjection.ActivatorUtilities).Assembly.Location,
+            ])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path))
+            .ToList();
+
+        var compilation = CSharpCompilation.Create(
+            assemblyName: "TestsAssembly",
+            syntaxTrees: [syntaxTree],
+            references: references,
+            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(new HybridCachePlusGenerator());
+        driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out var outputCompilation, out var generatorDiagnostics);
+
+        var generatedSources = driver.GetRunResult().Results
+            .Where(r => !r.GeneratedSources.IsDefault)
+            .SelectMany(r => r.GeneratedSources)
+            .ToImmutableArray();
+
+        var compilationErrors = outputCompilation.GetDiagnostics()
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .ToImmutableArray();
+
+        return (generatorDiagnostics, compilationErrors, generatedSources);
     }
 }

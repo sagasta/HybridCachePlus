@@ -2,6 +2,7 @@ using HybridCache.Plus;
 using HybridCache.Plus.Backplane;
 using HybridCache.Plus.Backplane.Redis;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
@@ -28,8 +29,8 @@ public static class RedisBackplaneServiceCollectionExtensions
             builder.Services.Configure(configure);
         }
 
-        // Register IConnectionMultiplexer resolution if not already registered
-        builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+        // Register IConnectionMultiplexer resolution if not already registered (e.g. by Aspire's AddRedisClient)
+        builder.Services.TryAddSingleton<IConnectionMultiplexer>(sp =>
         {
             var opts = sp.GetRequiredService<IOptions<RedisBackplaneOptions>>().Value;
             if (opts.ConnectionMultiplexer != null) return opts.ConnectionMultiplexer;
