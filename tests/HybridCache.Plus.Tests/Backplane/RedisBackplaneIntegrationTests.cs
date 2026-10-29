@@ -106,6 +106,30 @@ public class RedisBackplaneIntegrationTests
     }
 
     [Fact]
+    public async Task HostStart_CompletesOnlyOnceSubscribedToTheEvictionChannel()
+    {
+        // Run many times: the race only shows up when the thread pool is slow to pick up ExecuteAsync
+        for (var attempt = 0; attempt < 200; attempt++)
+        {
+            var broker = new InMemoryRedisBroker();
+            var (provider, _, _, _) = CreatePodInstance($"pod-{attempt}", broker);
+            var hostedServices = provider.GetServices<IHostedService>().ToList();
+            try
+            {
+                foreach (var svc in hostedServices) await svc.StartAsync(CancellationToken.None);
+
+                // Once the host has started, evictions published by other pods must not be missed
+                Assert.Equal(1, broker.SubscriberCount);
+            }
+            finally
+            {
+                foreach (var svc in hostedServices) await svc.StopAsync(CancellationToken.None);
+                await provider.DisposeAsync();
+            }
+        }
+    }
+
+    [Fact]
     public async Task MultiInstance_ExplicitEvictInInstanceA_PurgesL1CacheInInstanceB()
     {
         var broker = new InMemoryRedisBroker();

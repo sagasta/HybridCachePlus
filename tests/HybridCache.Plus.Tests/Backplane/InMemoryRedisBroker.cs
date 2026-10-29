@@ -11,6 +11,17 @@ public sealed class InMemoryRedisBroker
     private readonly List<Action<RedisChannel, RedisValue>> _subscribers = [];
     private readonly Lock _lock = new();
 
+    public int SubscriberCount
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _subscribers.Count;
+            }
+        }
+    }
+
     public void Subscribe(Action<RedisChannel, RedisValue> handler)
     {
         lock (_lock)
