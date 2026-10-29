@@ -27,6 +27,14 @@ public sealed class MultiTenantRedisOptions
     public bool EnableKeyPrefixTenantExtraction { get; set; } = true;
 
     /// <summary>
+    /// Maximum number of tenants without their own store (routed to <see cref="DefaultTenantId"/>) whose resolution is memoized.
+    /// Beyond this limit such tenants are resolved again on each access instead of growing the pool without bound
+    /// (tenant identifiers extracted from keys are not necessarily a closed set).
+    /// Default is 10,000.
+    /// </summary>
+    public int MaxFallbackTenantEntries { get; set; } = 10_000;
+
+    /// <summary>
     /// Delegate to resolve a Redis connection string for a given tenant.
     /// </summary>
     public Func<string, string?>? ConnectionStringResolver { get; private set; }

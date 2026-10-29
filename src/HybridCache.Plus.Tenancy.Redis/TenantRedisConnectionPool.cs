@@ -32,6 +32,8 @@ public sealed class TenantRedisConnectionPool(
     // factory concurrently, which would open (and leak) several multiplexers for the same tenant.
     private readonly ConcurrentDictionary<string, Lazy<IDistributedCache>> _caches = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, IConnectionMultiplexer> _ownedMultiplexers = new(StringComparer.OrdinalIgnoreCase);
+    // Tenants without their own store, memoized as aliases of the default tenant (bounded by MaxFallbackTenantEntries)
+    private readonly ConcurrentDictionary<string, byte> _fallbackTenants = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
     /// <inheritdoc />
@@ -52,7 +54,15 @@ public sealed class TenantRedisConnectionPool(
 
         try
         {
-            return lazyCache.Value;
+            var cache = lazyCache.Value;
+
+            if (_fallbackTenants.Count > _options.MaxFallbackTenantEntries &&
+                _fallbackTenants.TryRemove(normalizedTenantId, out _))
+            {
+                _caches.TryRemove(new KeyValuePair<string, Lazy<IDistributedCache>>(normalizedTenantId, lazyCache));
+            }
+
+            return cache;
         }
         catch
         {
@@ -101,6 +111,7 @@ public sealed class TenantRedisConnectionPool(
         // 4. Fallback to default tenant if not already on it
         if (!string.Equals(tenantId, _options.DefaultTenantId, StringComparison.OrdinalIgnoreCase))
         {
+            _fallbackTenants.TryAdd(tenantId, 0);
             return GetCacheForTenant(_options.DefaultTenantId);
         }
 

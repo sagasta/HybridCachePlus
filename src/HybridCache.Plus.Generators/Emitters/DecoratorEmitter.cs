@@ -53,6 +53,11 @@ public static class DecoratorEmitter
             EmitMethod(sb, indent + "    ", method);
         }
 
+        if (model.Methods.Any(m => !m.IsAsync && m.EvictionActions.Count > 0))
+        {
+            EmitSyncInvalidationHelpers(sb, indent + "    ");
+        }
+
         sb.AppendLine($"{indent}}}");
 
         if (!string.IsNullOrEmpty(model.InterfaceNamespace))
@@ -103,7 +108,7 @@ public static class DecoratorEmitter
             sb.AppendLine();
             sb.AppendLine($"{indent}    // Automated cache invalidation via HybridCache.Plus.");
             sb.AppendLine($"{indent}    // The mutation already succeeded, so invalidation must not be skipped if the caller cancels now.");
-            EmitEvictions(sb, indent + "    ", method, static call => $"await {call}.ConfigureAwait(false);");
+            EmitEvictions(sb, indent + "    ", method);
 
             if (method.IsGenericTask)
             {
@@ -128,8 +133,19 @@ public static class DecoratorEmitter
             }
 
             sb.AppendLine();
+            // Keys and tags are computed here (they may depend on ref/out arguments); the invalidation itself
+            // runs off any SynchronizationContext so a blocked caller thread cannot deadlock it.
+            var keys = method.EvictionActions
+                .Where(e => !string.IsNullOrEmpty(e.KeyTemplate))
+                .Select(e => EmitterHelpers.InvariantInterpolation(e.KeyTemplate))
+                .ToList();
+            var tags = method.EvictionActions
+                .SelectMany(e => e.TagTemplates)
+                .Select(EmitterHelpers.InvariantInterpolation)
+                .ToList();
+
             sb.AppendLine($"{indent}    // Automated synchronous cache invalidation via HybridCache.Plus");
-            EmitEvictions(sb, indent + "    ", method, static call => $"{call}.AsTask().GetAwaiter().GetResult();");
+            sb.AppendLine($"{indent}    __Invalidate({ToStringArray(keys)}, {ToStringArray(tags)});");
 
             if (!method.ReturnsVoid)
             {
@@ -143,7 +159,53 @@ public static class DecoratorEmitter
         sb.AppendLine();
     }
 
-    private static void EmitEvictions(StringBuilder sb, string indent, DecoratorMethodModel method, Func<string, string> invoke)
+    private static string ToStringArray(List<string> expressions) =>
+        expressions.Count == 0
+            ? "global::System.Array.Empty<string>()"
+            : $"new string[] {{ {string.Join(", ", expressions)} }}";
+
+    private static void EmitSyncInvalidationHelpers(StringBuilder sb, string indent)
+    {
+        sb.AppendLine($"{indent}private void __Invalidate(string[] keys, string[] tags)");
+        sb.AppendLine($"{indent}{{");
+        sb.AppendLine($"{indent}    // Blocking on async work that captured a SynchronizationContext (WPF, WinForms, legacy ASP.NET) deadlocks:");
+        sb.AppendLine($"{indent}    // in that case the invalidation is started on the thread pool, where nothing is captured.");
+        sb.AppendLine($"{indent}    var pending = global::System.Threading.SynchronizationContext.Current is null &&");
+        sb.AppendLine($"{indent}                  global::System.Threading.Tasks.TaskScheduler.Current == global::System.Threading.Tasks.TaskScheduler.Default");
+        sb.AppendLine($"{indent}        ? __InvalidateAsync(keys, tags)");
+        sb.AppendLine($"{indent}        : new global::System.Threading.Tasks.ValueTask(global::System.Threading.Tasks.Task.Run(() => __InvalidateAsync(keys, tags).AsTask()));");
+        sb.AppendLine();
+        sb.AppendLine($"{indent}    if (!pending.IsCompletedSuccessfully)");
+        sb.AppendLine($"{indent}    {{");
+        sb.AppendLine($"{indent}        pending.AsTask().GetAwaiter().GetResult();");
+        sb.AppendLine($"{indent}    }}");
+        sb.AppendLine($"{indent}}}");
+        sb.AppendLine();
+        sb.AppendLine($"{indent}private async global::System.Threading.Tasks.ValueTask __InvalidateAsync(string[] keys, string[] tags)");
+        sb.AppendLine($"{indent}{{");
+        sb.AppendLine($"{indent}    foreach (var key in keys)");
+        sb.AppendLine($"{indent}    {{");
+        sb.AppendLine($"{indent}        await _cache.RemoveAsync(key, global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
+        sb.AppendLine($"{indent}        global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction(key, \"DecoratorMutation\");");
+        sb.AppendLine($"{indent}        if (_publisher != null)");
+        sb.AppendLine($"{indent}        {{");
+        sb.AppendLine($"{indent}            await _publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateKey(key), global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
+        sb.AppendLine($"{indent}        }}");
+        sb.AppendLine($"{indent}    }}");
+        sb.AppendLine($"{indent}    foreach (var tag in tags)");
+        sb.AppendLine($"{indent}    {{");
+        sb.AppendLine($"{indent}        await _cache.RemoveByTagAsync(tag, global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
+        sb.AppendLine($"{indent}        global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction(tag, \"DecoratorTagMutation\");");
+        sb.AppendLine($"{indent}        if (_publisher != null)");
+        sb.AppendLine($"{indent}        {{");
+        sb.AppendLine($"{indent}            await _publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateTag(tag), global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
+        sb.AppendLine($"{indent}        }}");
+        sb.AppendLine($"{indent}    }}");
+        sb.AppendLine($"{indent}}}");
+        sb.AppendLine();
+    }
+
+    private static void EmitEvictions(StringBuilder sb, string indent, DecoratorMethodModel method)
     {
         var index = 0;
         foreach (var eviction in method.EvictionActions)
@@ -152,22 +214,22 @@ public static class DecoratorEmitter
             {
                 var keyVar = $"__key{index++}";
                 sb.AppendLine($"{indent}var {keyVar} = {EmitterHelpers.InvariantInterpolation(eviction.KeyTemplate)};");
-                sb.AppendLine($"{indent}{invoke($"_cache.RemoveAsync({keyVar}, global::System.Threading.CancellationToken.None)")}");
+                sb.AppendLine($"{indent}await _cache.RemoveAsync({keyVar}, global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
                 sb.AppendLine($"{indent}global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction({keyVar}, \"DecoratorMutation\");");
                 sb.AppendLine($"{indent}if (_publisher != null)");
                 sb.AppendLine($"{indent}{{");
-                sb.AppendLine($"{indent}    {invoke($"_publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateKey({keyVar}), global::System.Threading.CancellationToken.None)")}");
+                sb.AppendLine($"{indent}    await _publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateKey({keyVar}), global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
                 sb.AppendLine($"{indent}}}");
             }
             foreach (var tag in eviction.TagTemplates)
             {
                 var tagVar = $"__tag{index++}";
                 sb.AppendLine($"{indent}var {tagVar} = {EmitterHelpers.InvariantInterpolation(tag)};");
-                sb.AppendLine($"{indent}{invoke($"_cache.RemoveByTagAsync({tagVar}, global::System.Threading.CancellationToken.None)")}");
+                sb.AppendLine($"{indent}await _cache.RemoveByTagAsync({tagVar}, global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
                 sb.AppendLine($"{indent}global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction({tagVar}, \"DecoratorTagMutation\");");
                 sb.AppendLine($"{indent}if (_publisher != null)");
                 sb.AppendLine($"{indent}{{");
-                sb.AppendLine($"{indent}    {invoke($"_publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateTag({tagVar}), global::System.Threading.CancellationToken.None)")}");
+                sb.AppendLine($"{indent}    await _publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateTag({tagVar}), global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
                 sb.AppendLine($"{indent}}}");
             }
         }

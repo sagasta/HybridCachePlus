@@ -72,6 +72,22 @@ public class PolicyConfigurationTests
     }
 
     [Fact]
+    public async Task DisposedProvider_StopsListeningToConfigurationChanges()
+    {
+        var configuration = BuildConfiguration(localTtlSeconds: 60, vipLocalTtlSeconds: 10);
+        var provider = await StartHostAsync(configuration);
+        var registry = provider.GetRequiredService<HybridCachePlusPolicyRegistry>();
+
+        await provider.DisposeAsync();
+
+        configuration["HybridCachePlus:Policies:CatalogProducts:LocalTtlSeconds"] = "5";
+        configuration.Reload();
+
+        // The configuration (often a long-lived singleton) must not keep feeding, nor keep alive, disposed registries
+        Assert.Equal(TimeSpan.FromSeconds(60), registry.ResolveOptions("CatalogProducts", null, Fallback).LocalCacheExpiration);
+    }
+
+    [Fact]
     public async Task TwoHostsInOneProcess_EachCacheResolvesItsOwnPolicies()
     {
         await using var providerA = await StartHostAsync(BuildConfiguration(localTtlSeconds: 11, vipLocalTtlSeconds: 1));

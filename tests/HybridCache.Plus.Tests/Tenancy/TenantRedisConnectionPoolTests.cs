@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
@@ -38,6 +39,38 @@ public class TenantRedisConnectionPoolTests
 
         Assert.Equal(1, creations);
         Assert.All(caches, cache => Assert.Same(caches[0], cache));
+    }
+
+    [Fact]
+    public void GetCacheForTenant_UnknownTenantsBeyondLimit_AreNotRetained()
+    {
+        var resolutions = new ConcurrentDictionary<string, int>();
+        var defaultCache = new MemoryDistributedCache(Microsoft.Extensions.Options.Options.Create(new MemoryDistributedCacheOptions()));
+        var options = new MultiTenantRedisOptions { MaxFallbackTenantEntries = 2 };
+        options.ResolveDistributedCache((tenantId, _) =>
+        {
+            resolutions.AddOrUpdate(tenantId, 1, (_, n) => n + 1);
+            return tenantId == options.DefaultTenantId ? defaultCache : null; // only the default tenant has its own store
+        });
+
+        using var pool = new TenantRedisConnectionPool(
+            Microsoft.Extensions.Options.Options.Create(options),
+            new ServiceCollection().BuildServiceProvider());
+
+        // e.g. arbitrary tenant identifiers extracted from key prefixes
+        for (var round = 0; round < 3; round++)
+        {
+            for (var i = 0; i < 50; i++)
+            {
+                Assert.Same(defaultCache, pool.GetCacheForTenant($"unknown_{i}"));
+            }
+        }
+
+        // The first unknown tenants stay memoized; the rest are resolved again instead of growing the pool forever
+        Assert.Equal(1, resolutions["unknown_0"]);
+        Assert.Equal(1, resolutions["unknown_1"]);
+        Assert.Equal(3, resolutions["unknown_49"]);
+        Assert.Equal(1, resolutions[options.DefaultTenantId]);
     }
 
     [Fact]
