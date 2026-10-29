@@ -17,19 +17,37 @@ public sealed class MultiTenantDistributedCacheRouter(
     private readonly ITenantRedisConnectionPool _pool = pool ?? throw new ArgumentNullException(nameof(pool));
     private readonly MultiTenantRedisOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
 
+    // HybridCache stores tag invalidation timestamps in L2 under "__MSFT_HCT__{tag}" (no tenant prefix)
+    private const string HybridCacheTagKeyPrefix = "__MSFT_HCT__";
+
     private IDistributedCache ResolveTargetCache(string key)
     {
-        // 1. Ambient context resolution
-        var tenantId = tenantAccessor?.CurrentTenantId;
+        // 1. Tag invalidation records must live in one well-known place: routing them by ambient tenant would
+        //    write them where readers running under another (or no) tenant never look, silently losing evictions.
+        if (key.StartsWith(HybridCacheTagKeyPrefix, StringComparison.Ordinal))
+        {
+            return _pool.GetCacheForTenant(_options.DefaultTenantId);
+        }
 
-        // 2. Zero-allocation key prefix fallback
-        if (string.IsNullOrEmpty(tenantId) && _options.EnableKeyPrefixTenantExtraction)
+        // 2. A tenant-prefixed key is authoritative: the same key must always map to the same store,
+        //    whatever the ambient tenant of the caller (admin jobs, impersonation, background work).
+        string? tenantId = null;
+        if (_options.EnableKeyPrefixTenantExtraction)
         {
             tenantId = TenantKeyParser.ExtractTenantIdString(key, _options.KeyPrefixPattern);
         }
 
-        // 3. Default fallback
-        tenantId ??= _options.DefaultTenantId;
+        // 3. Ambient context resolution
+        if (string.IsNullOrEmpty(tenantId))
+        {
+            tenantId = tenantAccessor?.CurrentTenantId;
+        }
+
+        // 4. Default fallback
+        if (string.IsNullOrEmpty(tenantId))
+        {
+            tenantId = _options.DefaultTenantId;
+        }
 
         return _pool.GetCacheForTenant(tenantId);
     }

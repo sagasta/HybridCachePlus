@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Text;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 using HybridCache.Plus.Generators.Diagnostics;
@@ -143,7 +144,10 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                 method.IsGenericTask,
                 method.GenericReturnType,
                 method.Parameters,
-                new EquatableArray<EvictionActionModel>(contributed.Concat(method.EvictionActions)));
+                new EquatableArray<EvictionActionModel>(contributed.Concat(method.EvictionActions)),
+                method.TypeParameterList,
+                method.ConstraintClauses,
+                method.ExplicitInterface);
         });
 
         return new DecoratorInterfaceModel(
@@ -151,7 +155,8 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
             shape.InterfaceName,
             shape.InterfaceFullName,
             shape.DecoratorClassName,
-            new EquatableArray<DecoratorMethodModel>(methods));
+            new EquatableArray<DecoratorMethodModel>(methods),
+            shape.PassThroughMembers);
     }
 
     private static InterfaceExtractionResult ExtractInterface(GeneratorAttributeSyntaxContext ctx)
@@ -395,7 +400,11 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
 
                 foreach (var targetMethodName in methodNames)
                 {
-                    var targetOverloads = targetTypeSymbol.GetMembers(targetMethodName).OfType<IMethodSymbol>().ToList();
+                    var targetOverloads = GetInterfaceMembers(targetTypeSymbol)
+                        .Select(m => m.Member)
+                        .OfType<IMethodSymbol>()
+                        .Where(m => m.Name == targetMethodName && m.MethodKind == MethodKind.Ordinary)
+                        .ToList();
 
                     if (!isInterface || targetOverloads.Count == 0)
                     {
@@ -525,10 +534,28 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
         var decoratorClassName = $"{EmitterHelpers.StripInterfacePrefix(interfaceName)}CacheDecorator";
 
         var methods = new List<DecoratorMethodModel>();
+        var passThroughMembers = new List<string>();
 
-        foreach (var member in targetInterfaceSymbol.GetMembers())
+        foreach (var (member, declaringInterface) in GetInterfaceMembers(targetInterfaceSymbol))
         {
-            if (member is not IMethodSymbol method) continue;
+            // Inherited members are implemented explicitly: avoids clashes between base interfaces
+            string? explicitInterface = SymbolEqualityComparer.Default.Equals(declaringInterface, targetInterfaceSymbol)
+                ? null
+                : declaringInterface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+            if (member is IPropertySymbol property)
+            {
+                passThroughMembers.Add(RenderPropertyPassThrough(property, explicitInterface));
+                continue;
+            }
+
+            if (member is IEventSymbol eventSymbol)
+            {
+                passThroughMembers.Add(RenderEventPassThrough(eventSymbol, explicitInterface));
+                continue;
+            }
+
+            if (member is not IMethodSymbol { MethodKind: MethodKind.Ordinary } method) continue;
 
             // Extract method signature
             var returnTypeStr = method.ReturnType.ToDisplayString(NullableFullyQualifiedFormat);
@@ -550,15 +577,7 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                 }
             }
 
-            var parameters = new List<ParameterModel>();
-            foreach (var p in method.Parameters)
-            {
-                var isCt = p.Type.ToDisplayString().Contains("CancellationToken");
-                parameters.Add(new ParameterModel(
-                    p.Name,
-                    p.Type.ToDisplayString(NullableFullyQualifiedFormat),
-                    isCt));
-            }
+            var parameters = method.Parameters.Select(ToParameterModel).ToList();
 
             var evictionActions = new List<EvictionActionModel>();
 
@@ -595,7 +614,10 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                 isGenericTask,
                 genericReturnType,
                 new EquatableArray<ParameterModel>(parameters),
-                new EquatableArray<EvictionActionModel>(evictionActions)));
+                new EquatableArray<EvictionActionModel>(evictionActions),
+                method.TypeParameters.Length > 0 ? $"<{string.Join(", ", method.TypeParameters.Select(t => t.Name))}>" : "",
+                BuildConstraintClauses(method, explicitInterface != null),
+                explicitInterface));
         }
 
         return new DecoratorInterfaceModel(
@@ -603,7 +625,125 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
             interfaceName,
             fullName,
             decoratorClassName,
-            new EquatableArray<DecoratorMethodModel>(methods));
+            new EquatableArray<DecoratorMethodModel>(methods),
+            new EquatableArray<string>(passThroughMembers));
+    }
+
+    /// <summary>
+    /// Returns the interface's own members followed by those inherited from its base interfaces,
+    /// skipping static members and members that already have a default implementation.
+    /// </summary>
+    private static IEnumerable<(ISymbol Member, INamedTypeSymbol DeclaringInterface)> GetInterfaceMembers(INamedTypeSymbol interfaceSymbol)
+    {
+        foreach (var type in new[] { interfaceSymbol }.Concat(interfaceSymbol.AllInterfaces))
+        {
+            foreach (var member in type.GetMembers())
+            {
+                if (member.IsStatic || !member.IsAbstract) continue;
+                yield return (member, type);
+            }
+        }
+    }
+
+    private static ParameterModel ToParameterModel(IParameterSymbol p)
+    {
+        var refModifier = p.RefKind switch
+        {
+            RefKind.Ref => "ref ",
+            RefKind.Out => "out ",
+            RefKind.In => "in ",
+            RefKind.RefReadOnlyParameter => "ref readonly ",
+            _ => ""
+        };
+        var argumentModifier = p.RefKind switch
+        {
+            RefKind.Ref or RefKind.RefReadOnlyParameter => "ref ",
+            RefKind.Out => "out ",
+            RefKind.In => "in ",
+            _ => ""
+        };
+        var declarationModifier = (p.ScopedKind == ScopedKind.ScopedRef ? "scoped " : "") +
+                                  (p.IsParams ? "params " : "") +
+                                  refModifier;
+
+        return new ParameterModel(
+            EscapeIdentifier(p.Name),
+            p.Type.ToDisplayString(NullableFullyQualifiedFormat),
+            p.Type.ToDisplayString().Contains("CancellationToken"),
+            declarationModifier,
+            argumentModifier);
+    }
+
+    private static string EscapeIdentifier(string name) =>
+        SyntaxFacts.GetKeywordKind(name) != SyntaxKind.None ? "@" + name : name;
+
+    /// <summary>
+    /// Implicit implementations must restate every constraint; explicit ones may only restate class/struct.
+    /// </summary>
+    private static string BuildConstraintClauses(IMethodSymbol method, bool isExplicit)
+    {
+        var sb = new StringBuilder();
+        foreach (var tp in method.TypeParameters)
+        {
+            var constraints = new List<string>();
+            if (tp.HasReferenceTypeConstraint) constraints.Add("class");
+            else if (tp.HasUnmanagedTypeConstraint && !isExplicit) constraints.Add("unmanaged");
+            else if (tp.HasValueTypeConstraint) constraints.Add("struct");
+
+            if (!isExplicit)
+            {
+                if (tp.HasNotNullConstraint) constraints.Add("notnull");
+                constraints.AddRange(tp.ConstraintTypes.Select(t => t.ToDisplayString(NullableFullyQualifiedFormat)));
+                if (tp.HasConstructorConstraint && !tp.HasValueTypeConstraint) constraints.Add("new()");
+            }
+
+            if (constraints.Count > 0)
+            {
+                sb.Append($" where {tp.Name} : {string.Join(", ", constraints)}");
+            }
+        }
+        return sb.ToString();
+    }
+
+    private static string RenderPropertyPassThrough(IPropertySymbol property, string? explicitInterface)
+    {
+        var type = property.Type.ToDisplayString(NullableFullyQualifiedFormat);
+        var refKind = property.ReturnsByRefReadonly ? "ref readonly " : property.ReturnsByRef ? "ref " : "";
+        var target = explicitInterface != null ? $"(({explicitInterface})_inner)" : "_inner";
+
+        string name;
+        string access;
+        if (property.IsIndexer)
+        {
+            var parameters = property.Parameters.Select(ToParameterModel).ToList();
+            name = $"this[{string.Join(", ", parameters.Select(p => p.Declaration))}]";
+            access = $"{target}[{string.Join(", ", parameters.Select(p => p.Argument))}]";
+        }
+        else
+        {
+            name = EscapeIdentifier(property.Name);
+            access = $"{target}.{name}";
+        }
+
+        var accessors = new List<string>();
+        if (property.GetMethod != null) accessors.Add($"get => {(refKind.Length > 0 ? "ref " : "")}{access};");
+        if (property.SetMethod != null) accessors.Add(property.SetMethod.IsInitOnly ? $"init => {access} = value;" : $"set => {access} = value;");
+
+        var declaration = explicitInterface != null
+            ? $"{refKind}{type} {explicitInterface}.{name}"
+            : $"public {refKind}{type} {name}";
+        return $"{declaration} {{ {string.Join(" ", accessors)} }}";
+    }
+
+    private static string RenderEventPassThrough(IEventSymbol eventSymbol, string? explicitInterface)
+    {
+        var type = eventSymbol.Type.ToDisplayString(NullableFullyQualifiedFormat);
+        var target = explicitInterface != null ? $"(({explicitInterface})_inner)" : "_inner";
+        var name = EscapeIdentifier(eventSymbol.Name);
+        var declaration = explicitInterface != null
+            ? $"event {type} {explicitInterface}.{name}"
+            : $"public event {type} {name}";
+        return $"{declaration} {{ add => {target}.{name} += value; remove => {target}.{name} -= value; }}";
     }
 
     private static bool TryResolveTemplate(

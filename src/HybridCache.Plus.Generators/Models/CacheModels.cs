@@ -1,21 +1,43 @@
 namespace HybridCache.Plus.Generators.Models;
 
-public sealed class ParameterModel(string name, string type, bool isCancellationToken = false)
+public sealed class ParameterModel(
+    string name,
+    string type,
+    bool isCancellationToken = false,
+    string declarationModifier = "",
+    string argumentModifier = "")
     : IEquatable<ParameterModel>
 {
     public string Name { get; } = name;
     public string Type { get; } = type;
     public bool IsCancellationToken { get; } = isCancellationToken;
 
+    /// <summary>
+    /// Modifier in the parameter declaration ("ref ", "out ", "in ", "ref readonly ", "params ", "scoped ref ").
+    /// </summary>
+    public string DeclarationModifier { get; } = declarationModifier;
+
+    /// <summary>
+    /// Modifier when forwarding the argument ("ref ", "out ", "in ").
+    /// </summary>
+    public string ArgumentModifier { get; } = argumentModifier;
+
+    public string Declaration => $"{DeclarationModifier}{Type} {Name}";
+    public string Argument => $"{ArgumentModifier}{Name}";
+
     public bool Equals(ParameterModel? other)
     {
         if (other is null) return false;
         if (ReferenceEquals(this, other)) return true;
-        return Name == other.Name && Type == other.Type && IsCancellationToken == other.IsCancellationToken;
+        return Name == other.Name &&
+               Type == other.Type &&
+               IsCancellationToken == other.IsCancellationToken &&
+               DeclarationModifier == other.DeclarationModifier &&
+               ArgumentModifier == other.ArgumentModifier;
     }
 
     public override bool Equals(object? obj) => Equals(obj as ParameterModel);
-    public override int GetHashCode() => (Name, Type, IsCancellationToken).GetHashCode();
+    public override int GetHashCode() => (Name, Type, IsCancellationToken, DeclarationModifier).GetHashCode();
 }
 
 public sealed class CacheMethodModel(

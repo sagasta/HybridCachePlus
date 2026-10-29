@@ -26,9 +26,27 @@ public sealed class DecoratorMethodModel(
     bool isGenericTask,
     string? genericReturnType,
     EquatableArray<ParameterModel> parameters,
-    EquatableArray<EvictionActionModel> evictionActions)
+    EquatableArray<EvictionActionModel> evictionActions,
+    string typeParameterList = "",
+    string constraintClauses = "",
+    string? explicitInterface = null)
     : IEquatable<DecoratorMethodModel>
 {
+    /// <summary>
+    /// Generic type parameter list, e.g. "&lt;T&gt;" (empty for non-generic methods).
+    /// </summary>
+    public string TypeParameterList { get; } = typeParameterList;
+
+    /// <summary>
+    /// Constraint clauses, e.g. " where T : class" (empty when unconstrained).
+    /// </summary>
+    public string ConstraintClauses { get; } = constraintClauses;
+
+    /// <summary>
+    /// Fully qualified base interface when the method is inherited and implemented explicitly; null for own members.
+    /// </summary>
+    public string? ExplicitInterface { get; } = explicitInterface;
+
     /// <summary>
     /// Uniquely identifies the method (including overloads) inside its interface.
     /// </summary>
@@ -54,7 +72,10 @@ public sealed class DecoratorMethodModel(
                IsGenericTask == other.IsGenericTask &&
                GenericReturnType == other.GenericReturnType &&
                Parameters.Equals(other.Parameters) &&
-               EvictionActions.Equals(other.EvictionActions);
+               EvictionActions.Equals(other.EvictionActions) &&
+               TypeParameterList == other.TypeParameterList &&
+               ConstraintClauses == other.ConstraintClauses &&
+               ExplicitInterface == other.ExplicitInterface;
     }
 
     public override bool Equals(object? obj) => Equals(obj as DecoratorMethodModel);
@@ -66,7 +87,8 @@ public sealed class DecoratorInterfaceModel(
     string interfaceName,
     string interfaceFullName,
     string decoratorClassName,
-    EquatableArray<DecoratorMethodModel> methods)
+    EquatableArray<DecoratorMethodModel> methods,
+    EquatableArray<string> passThroughMembers)
     : IEquatable<DecoratorInterfaceModel>
 {
     public string InterfaceNamespace { get; } = interfaceNamespace;
@@ -74,6 +96,11 @@ public sealed class DecoratorInterfaceModel(
     public string InterfaceFullName { get; } = interfaceFullName;
     public string DecoratorClassName { get; } = decoratorClassName;
     public EquatableArray<DecoratorMethodModel> Methods { get; } = methods;
+
+    /// <summary>
+    /// Pre-rendered properties, indexers and events that simply forward to the inner instance.
+    /// </summary>
+    public EquatableArray<string> PassThroughMembers { get; } = passThroughMembers;
 
     public bool Equals(DecoratorInterfaceModel? other)
     {
@@ -83,7 +110,8 @@ public sealed class DecoratorInterfaceModel(
                InterfaceName == other.InterfaceName &&
                InterfaceFullName == other.InterfaceFullName &&
                DecoratorClassName == other.DecoratorClassName &&
-               Methods.Equals(other.Methods);
+               Methods.Equals(other.Methods) &&
+               PassThroughMembers.Equals(other.PassThroughMembers);
     }
 
     public override bool Equals(object? obj) => Equals(obj as DecoratorInterfaceModel);

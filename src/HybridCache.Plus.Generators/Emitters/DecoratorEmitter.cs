@@ -42,6 +42,12 @@ public static class DecoratorEmitter
         sb.AppendLine($"{indent}    }}");
         sb.AppendLine();
 
+        foreach (var member in model.PassThroughMembers)
+        {
+            sb.AppendLine($"{indent}    {member}");
+            sb.AppendLine();
+        }
+
         foreach (var method in model.Methods)
         {
             EmitMethod(sb, indent + "    ", method);
@@ -59,17 +65,26 @@ public static class DecoratorEmitter
 
     private static void EmitMethod(StringBuilder sb, string indent, DecoratorMethodModel method)
     {
-        var paramList = string.Join(", ", method.Parameters.Select(p => $"{p.Type} {p.Name}"));
-        var argList = string.Join(", ", method.Parameters.Select(p => p.Name));
+        var paramList = string.Join(", ", method.Parameters.Select(p => p.Declaration));
+        var argList = string.Join(", ", method.Parameters.Select(p => p.Argument));
+
+        // Inherited members are implemented explicitly and invoked through their declaring interface
+        var isExplicit = method.ExplicitInterface != null;
+        var name = isExplicit ? $"{method.ExplicitInterface}.{method.MethodName}" : method.MethodName;
+        var access = isExplicit ? "" : "public ";
+        var signature = $"{method.ReturnType} {name}{method.TypeParameterList}({paramList}){method.ConstraintClauses}";
+        var call = isExplicit
+            ? $"(({method.ExplicitInterface})_inner).{method.MethodName}{method.TypeParameterList}({argList})"
+            : $"_inner.{method.MethodName}{method.TypeParameterList}({argList})";
 
         // If no evictions, just forward directly
         if (method.EvictionActions.Count == 0)
         {
-            sb.AppendLine($"{indent}public {method.ReturnType} {method.MethodName}({paramList})");
+            sb.AppendLine($"{indent}{access}{signature}");
             sb.AppendLine($"{indent}{{");
             sb.AppendLine(method.ReturnsVoid
-                ? $"{indent}    _inner.{method.MethodName}({argList});"
-                : $"{indent}    return _inner.{method.MethodName}({argList});");
+                ? $"{indent}    {call};"
+                : $"{indent}    return {call};");
             sb.AppendLine($"{indent}}}");
             sb.AppendLine();
             return;
@@ -78,12 +93,12 @@ public static class DecoratorEmitter
         // Method has evictions: execute inner, then invalidate
         if (method.IsAsync)
         {
-            sb.AppendLine($"{indent}public async {method.ReturnType} {method.MethodName}({paramList})");
+            sb.AppendLine($"{indent}{access}async {signature}");
             sb.AppendLine($"{indent}{{");
 
             sb.AppendLine(method.IsGenericTask
-                ? $"{indent}    var result = await _inner.{method.MethodName}({argList}).ConfigureAwait(false);"
-                : $"{indent}    await _inner.{method.MethodName}({argList}).ConfigureAwait(false);");
+                ? $"{indent}    var __result = await {call}.ConfigureAwait(false);"
+                : $"{indent}    await {call}.ConfigureAwait(false);");
 
             sb.AppendLine();
             sb.AppendLine($"{indent}    // Automated cache invalidation via HybridCache.Plus.");
@@ -93,23 +108,23 @@ public static class DecoratorEmitter
             if (method.IsGenericTask)
             {
                 sb.AppendLine();
-                sb.AppendLine($"{indent}    return result;");
+                sb.AppendLine($"{indent}    return __result;");
             }
 
             sb.AppendLine($"{indent}}}");
         }
         else
         {
-            sb.AppendLine($"{indent}public {method.ReturnType} {method.MethodName}({paramList})");
+            sb.AppendLine($"{indent}{access}{signature}");
             sb.AppendLine($"{indent}{{");
 
             if (method.ReturnsVoid)
             {
-                sb.AppendLine($"{indent}    _inner.{method.MethodName}({argList});");
+                sb.AppendLine($"{indent}    {call};");
             }
             else
             {
-                sb.AppendLine($"{indent}    var result = _inner.{method.MethodName}({argList});");
+                sb.AppendLine($"{indent}    var __result = {call};");
             }
 
             sb.AppendLine();
@@ -119,7 +134,7 @@ public static class DecoratorEmitter
             if (!method.ReturnsVoid)
             {
                 sb.AppendLine();
-                sb.AppendLine($"{indent}    return result;");
+                sb.AppendLine($"{indent}    return __result;");
             }
 
             sb.AppendLine($"{indent}}}");

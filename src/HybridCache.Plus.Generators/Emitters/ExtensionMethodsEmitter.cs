@@ -27,9 +27,12 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine($"    public static partial class {className}");
         sb.AppendLine("    {");
 
-        foreach (var method in model.Methods)
+        // Overloaded contract methods share a name: the options field gets the method index, and identical
+        // tag-eviction helpers (same name and parameters) are emitted only once.
+        var emittedTagEvictions = new HashSet<string>();
+        for (var i = 0; i < model.Methods.Count; i++)
         {
-            EmitMethodExtensions(sb, method);
+            EmitMethodExtensions(sb, model.Methods[i], i, emittedTagEvictions);
         }
 
         sb.AppendLine("    }");
@@ -42,7 +45,7 @@ public static class ExtensionMethodsEmitter
         return sb.ToString();
     }
 
-    private static void EmitMethodExtensions(StringBuilder sb, CacheMethodModel method)
+    private static void EmitMethodExtensions(StringBuilder sb, CacheMethodModel method, int methodIndex, HashSet<string> emittedTagEvictions)
     {
         var paramSignature = string.Join(", ", method.Parameters.Select(p => $"{p.Type} {p.Name}"));
         var formatKeyMethodName = $"Format{GetBaseMethodName(method.MethodName)}Key";
@@ -60,7 +63,7 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine();
 
         // 2. Pre-calculated EntryOptions
-        var optionsFieldName = $"_options_{method.MethodName}";
+        var optionsFieldName = $"_options_{method.MethodName}_{methodIndex}";
         sb.AppendLine($"        private static readonly HybridCacheEntryOptions {optionsFieldName} = new()");
         sb.AppendLine("        {");
         if (method.LocalTtlSeconds > 0)
@@ -234,6 +237,11 @@ public static class ExtensionMethodsEmitter
             var tagParamSig = tagParams.Count > 0
                 ? ", " + string.Join(", ", tagParams.Select(p => $"{p.Type} {p.Name}"))
                 : "";
+
+            if (!emittedTagEvictions.Add($"{tagEvictMethodName}({string.Join(",", tagParams.Select(p => p.Type))})"))
+            {
+                continue;
+            }
 
             sb.AppendLine($"        /// <summary>");
             sb.AppendLine($"        /// Evicts all cached entries matching tag '{tag}' and broadcasts to distributed backplane if active.");
