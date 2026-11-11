@@ -50,7 +50,10 @@ public sealed class CacheMethodModel(
     int localTtlSeconds,
     int distributedTtlSeconds,
     EquatableArray<string> tags,
-    EquatableArray<ParameterModel> parameters)
+    EquatableArray<ParameterModel> parameters,
+    int failSafeMaxAgeSeconds = 0,
+    int factorySoftTimeoutMs = 0,
+    int failSafeThrottleSeconds = 0)
     : IEquatable<CacheMethodModel>
 {
     public string MethodName { get; } = methodName;
@@ -67,6 +70,10 @@ public sealed class CacheMethodModel(
     public int DistributedTtlSeconds { get; } = distributedTtlSeconds;
     public EquatableArray<string> Tags { get; } = tags;
     public EquatableArray<ParameterModel> Parameters { get; } = parameters;
+    public int FailSafeMaxAgeSeconds { get; } = failSafeMaxAgeSeconds;
+    public int FactorySoftTimeoutMs { get; } = factorySoftTimeoutMs;
+    public int FailSafeThrottleSeconds { get; } = failSafeThrottleSeconds;
+    public bool HasFailSafe => FailSafeMaxAgeSeconds > 0;
 
     public bool Equals(CacheMethodModel? other)
     {
@@ -81,7 +88,10 @@ public sealed class CacheMethodModel(
                LocalTtlSeconds == other.LocalTtlSeconds &&
                DistributedTtlSeconds == other.DistributedTtlSeconds &&
                Tags.Equals(other.Tags) &&
-               Parameters.Equals(other.Parameters);
+               Parameters.Equals(other.Parameters) &&
+               FailSafeMaxAgeSeconds == other.FailSafeMaxAgeSeconds &&
+               FactorySoftTimeoutMs == other.FactorySoftTimeoutMs &&
+               FailSafeThrottleSeconds == other.FailSafeThrottleSeconds;
     }
 
     public override bool Equals(object? obj) => Equals(obj as CacheMethodModel);

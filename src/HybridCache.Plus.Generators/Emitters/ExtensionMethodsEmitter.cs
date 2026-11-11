@@ -77,6 +77,14 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine("        };");
         sb.AppendLine();
 
+        var failSafeFieldName = $"_failSafe_{method.MethodName}_{methodIndex}";
+        if (method.HasFailSafe)
+        {
+            sb.AppendLine($"        private static readonly global::HybridCache.Plus.Resilience.FailSafePolicy {failSafeFieldName} =");
+            sb.AppendLine($"            global::HybridCache.Plus.Resilience.FailSafePolicy.FromSettings({method.FailSafeMaxAgeSeconds}, {method.FactorySoftTimeoutMs}, {method.FailSafeThrottleSeconds});");
+            sb.AppendLine();
+        }
+
         // 3. GetOrCreateAsync (Factory with CancellationToken)
         var getMethodName = method.MethodName;
         var extraParams = method.Parameters.Count > 0
@@ -97,6 +105,10 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine("        {");
         sb.AppendLine($"            string cacheKey = {formatKeyMethodName}({string.Join(", ", method.Parameters.Select(p => p.Name))});");
         sb.AppendLine($"            options ??= global::HybridCache.Plus.Policies.HybridCachePlusPolicyRegistry.Resolve(cache, \"{policyLiteral}\", {tenantArg}, {optionsFieldName});");
+        if (method.HasFailSafe)
+        {
+            sb.AppendLine($"            var failSafe = global::HybridCache.Plus.Policies.HybridCachePlusPolicyRegistry.ResolveFailSafe(cache, \"{policyLiteral}\", {tenantArg}, {failSafeFieldName});");
+        }
 
         if (method.Tags.Count > 0)
         {
@@ -109,16 +121,14 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine($"                var stopwatch = global::System.Diagnostics.Stopwatch.StartNew();");
         sb.AppendLine($"                using var activity = global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.StartActivity(\"{method.MethodName}\", \"{policyLiteral}\", {tenantArg});");
         sb.AppendLine($"                bool isMiss = false;");
-        sb.AppendLine($"                var result = await cache.GetOrCreateAsync(");
-        sb.AppendLine($"                    cacheKey,");
-        sb.AppendLine($"                    async ct =>");
-        sb.AppendLine($"                    {{");
-        sb.AppendLine($"                        isMiss = true;");
-        sb.AppendLine($"                        return await factory(ct).ConfigureAwait(false);");
-        sb.AppendLine($"                    }},");
-        sb.AppendLine($"                    options,");
-        sb.AppendLine($"                    tags,");
-        sb.AppendLine($"                    cancellationToken).ConfigureAwait(false);");
+        EmitGetOrCreateCall(sb, "                ", "var result = await ", method, policyLiteral, tenantArg, state: null, factoryLines:
+        [
+            "async ct =>",
+            "{",
+            "    isMiss = true;",
+            "    return await factory(ct).ConfigureAwait(false);",
+            "}",
+        ]);
         sb.AppendLine($"                stopwatch.Stop();");
         sb.AppendLine($"                global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordDuration(stopwatch.Elapsed.TotalMilliseconds, \"GetOrCreate\", \"{policyLiteral}\", {tenantArg});");
         sb.AppendLine($"                if (isMiss)");
@@ -132,12 +142,7 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine($"                return result;");
         sb.AppendLine($"            }}");
         sb.AppendLine();
-        sb.AppendLine($"            return await cache.GetOrCreateAsync(");
-        sb.AppendLine($"                cacheKey,");
-        sb.AppendLine($"                factory,");
-        sb.AppendLine($"                options,");
-        sb.AppendLine($"                tags,");
-        sb.AppendLine($"                cancellationToken).ConfigureAwait(false);");
+        EmitGetOrCreateCall(sb, "            ", "return await ", method, policyLiteral, tenantArg, state: null, factoryLines: ["factory"]);
         sb.AppendLine("        }");
         sb.AppendLine();
 
@@ -155,6 +160,10 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine("        {");
         sb.AppendLine($"            string cacheKey = {formatKeyMethodName}({string.Join(", ", method.Parameters.Select(p => p.Name))});");
         sb.AppendLine($"            options ??= global::HybridCache.Plus.Policies.HybridCachePlusPolicyRegistry.Resolve(cache, \"{policyLiteral}\", {tenantArg}, {optionsFieldName});");
+        if (method.HasFailSafe)
+        {
+            sb.AppendLine($"            var failSafe = global::HybridCache.Plus.Policies.HybridCachePlusPolicyRegistry.ResolveFailSafe(cache, \"{policyLiteral}\", {tenantArg}, {failSafeFieldName});");
+        }
 
         if (method.Tags.Count > 0)
         {
@@ -167,17 +176,29 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine($"                var stopwatch = global::System.Diagnostics.Stopwatch.StartNew();");
         sb.AppendLine($"                using var activity = global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.StartActivity(\"{method.MethodName}\", \"{policyLiteral}\", {tenantArg});");
         sb.AppendLine($"                bool isMiss = false;");
-        sb.AppendLine($"                var result = await cache.GetOrCreateAsync(");
-        sb.AppendLine($"                    cacheKey,");
-        sb.AppendLine($"                    (state, factory),");
-        sb.AppendLine($"                    async (s, ct) =>");
-        sb.AppendLine($"                    {{");
-        sb.AppendLine($"                        isMiss = true;");
-        sb.AppendLine($"                        return await s.factory(s.state, ct).ConfigureAwait(false);");
-        sb.AppendLine($"                    }},");
-        sb.AppendLine($"                    options,");
-        sb.AppendLine($"                    tags,");
-        sb.AppendLine($"                    cancellationToken).ConfigureAwait(false);");
+        if (method.HasFailSafe)
+        {
+            // The fail-safe path already allocates its load context, so a closure costs little extra here.
+            EmitGetOrCreateCall(sb, "                ", "var result = await ", method, policyLiteral, tenantArg, state: null, factoryLines:
+            [
+                "async ct =>",
+                "{",
+                "    isMiss = true;",
+                "    return await factory(state, ct).ConfigureAwait(false);",
+                "}",
+            ]);
+        }
+        else
+        {
+            EmitGetOrCreateCall(sb, "                ", "var result = await ", method, policyLiteral, tenantArg, state: "(state, factory)", factoryLines:
+            [
+                "async (s, ct) =>",
+                "{",
+                "    isMiss = true;",
+                "    return await s.factory(s.state, ct).ConfigureAwait(false);",
+                "}",
+            ]);
+        }
         sb.AppendLine($"                stopwatch.Stop();");
         sb.AppendLine($"                global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordDuration(stopwatch.Elapsed.TotalMilliseconds, \"GetOrCreate\", \"{policyLiteral}\", {tenantArg});");
         sb.AppendLine($"                if (isMiss)");
@@ -191,13 +212,7 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine($"                return result;");
         sb.AppendLine($"            }}");
         sb.AppendLine();
-        sb.AppendLine($"            return await cache.GetOrCreateAsync(");
-        sb.AppendLine($"                cacheKey,");
-        sb.AppendLine($"                state,");
-        sb.AppendLine($"                factory,");
-        sb.AppendLine($"                options,");
-        sb.AppendLine($"                tags,");
-        sb.AppendLine($"                cancellationToken).ConfigureAwait(false);");
+        EmitGetOrCreateCall(sb, "            ", "return await ", method, policyLiteral, tenantArg, state: "state", factoryLines: ["factory"]);
         sb.AppendLine("        }");
         sb.AppendLine();
 
@@ -211,12 +226,25 @@ public static class ExtensionMethodsEmitter
         sb.AppendLine($"            CancellationToken cancellationToken = default)");
         sb.AppendLine("        {");
         sb.AppendLine($"            string cacheKey = {formatKeyMethodName}({string.Join(", ", method.Parameters.Select(p => p.Name))});");
-        sb.AppendLine($"            await cache.RemoveAsync(cacheKey, cancellationToken).ConfigureAwait(false);");
+        if (method.HasFailSafe)
+        {
+            // An explicit eviction means the value is wrong, so its fail-safe backup must not survive it.
+            sb.AppendLine($"            string backupKey = global::HybridCache.Plus.Resilience.HybridCachePlusFailSafe.GetBackupKey(cacheKey);");
+            sb.AppendLine($"            await cache.RemoveAsync(new[] {{ cacheKey, backupKey }}, cancellationToken).ConfigureAwait(false);");
+        }
+        else
+        {
+            sb.AppendLine($"            await cache.RemoveAsync(cacheKey, cancellationToken).ConfigureAwait(false);");
+        }
         sb.AppendLine($"            global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction(cacheKey, \"ManualEvict\", {tenantArg});");
         sb.AppendLine($"            var publisher = global::HybridCache.Plus.Backplane.HybridCachePlusBackplaneContext.GetPublisher(cache);");
         sb.AppendLine($"            if (publisher != null)");
         sb.AppendLine($"            {{");
         sb.AppendLine($"                await publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateKey(cacheKey), cancellationToken).ConfigureAwait(false);");
+        if (method.HasFailSafe)
+        {
+            sb.AppendLine($"                await publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateKey(backupKey), cancellationToken).ConfigureAwait(false);");
+        }
         sb.AppendLine($"            }}");
         sb.AppendLine("        }");
         sb.AppendLine();
@@ -261,6 +289,55 @@ public static class ExtensionMethodsEmitter
             sb.AppendLine("        }");
             sb.AppendLine();
         }
+    }
+
+    /// <summary>
+    /// Emits the GetOrCreate call, through the fail-safe engine when the contract method opted in to it.
+    /// A null <paramref name="state"/> selects the stateless factory overload.
+    /// </summary>
+    private static void EmitGetOrCreateCall(
+        StringBuilder sb,
+        string indent,
+        string prefix,
+        CacheMethodModel method,
+        string policyLiteral,
+        string tenantArg,
+        string? state,
+        string[] factoryLines)
+    {
+        if (method.HasFailSafe)
+        {
+            // The stateless overload gets explicit type arguments: an async lambda alone cannot infer ValueTask<T>.
+            var typeArgs = state == null ? $"<{method.ReturnType}>" : "";
+            sb.AppendLine($"{indent}{prefix}global::HybridCache.Plus.Resilience.HybridCachePlusFailSafe.GetOrCreateAsync{typeArgs}(");
+            sb.AppendLine($"{indent}    cache,");
+        }
+        else
+        {
+            sb.AppendLine($"{indent}{prefix}cache.GetOrCreateAsync(");
+        }
+
+        sb.AppendLine($"{indent}    cacheKey,");
+        if (state != null)
+        {
+            sb.AppendLine($"{indent}    {state},");
+        }
+
+        for (var i = 0; i < factoryLines.Length; i++)
+        {
+            var suffix = i == factoryLines.Length - 1 ? "," : "";
+            sb.AppendLine($"{indent}    {factoryLines[i]}{suffix}");
+        }
+
+        sb.AppendLine($"{indent}    options,");
+        sb.AppendLine($"{indent}    tags,");
+        if (method.HasFailSafe)
+        {
+            sb.AppendLine($"{indent}    failSafe,");
+            sb.AppendLine($"{indent}    \"{policyLiteral}\",");
+            sb.AppendLine($"{indent}    {tenantArg},");
+        }
+        sb.AppendLine($"{indent}    cancellationToken).ConfigureAwait(false);");
     }
 
     private static string GetBaseMethodName(string methodName)

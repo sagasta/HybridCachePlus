@@ -47,6 +47,11 @@ public static class HybridCachePlusDiagnostics
         unit: "{messages}",
         description: "Number of eviction messages received from the backplane.");
 
+    private static readonly Counter<long> s_failSafeActivationsCounter = s_meter.CreateCounter<long>(
+        name: "hybridcache_plus.failsafe.activations",
+        unit: "{activations}",
+        description: "Number of times a fail-safe backup value was served because the factory failed or exceeded its soft timeout.");
+
     private static readonly Histogram<double> s_durationHistogram = s_meter.CreateHistogram<double>(
         name: "hybridcache_plus.duration",
         unit: "ms",
@@ -156,6 +161,22 @@ public static class HybridCachePlusDiagnostics
 
         s_durationHistogram.Record(durationMs,
             new KeyValuePair<string, object?>("cache.operation", operation),
+            new KeyValuePair<string, object?>("cache.policy", policy),
+            new KeyValuePair<string, object?>("cache.tenant", TenantTag(tenant)));
+    }
+
+    /// <summary>
+    /// Records that a fail-safe backup value was served instead of a fresh one.
+    /// </summary>
+    /// <param name="reason"><c>FactoryError</c> or <c>FactoryTimeout</c>.</param>
+    /// <param name="policy">The cache policy name.</param>
+    /// <param name="tenant">The tenant identifier, if any.</param>
+    public static void RecordFailSafeActivation(string reason, string policy, string? tenant = null)
+    {
+        if (!IsEnabled || !s_failSafeActivationsCounter.Enabled) return;
+
+        s_failSafeActivationsCounter.Add(1,
+            new KeyValuePair<string, object?>("failsafe.reason", reason),
             new KeyValuePair<string, object?>("cache.policy", policy),
             new KeyValuePair<string, object?>("cache.tenant", TenantTag(tenant)));
     }

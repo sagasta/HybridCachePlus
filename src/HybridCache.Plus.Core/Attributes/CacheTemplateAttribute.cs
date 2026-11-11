@@ -33,4 +33,25 @@ public sealed class CacheTemplateAttribute(string template) : Attribute
     /// Gets or sets the collection of tag templates associated with this cache entry (e.g. ["tenant:{tenantId}"]).
     /// </summary>
     public string[] Tags { get; set; } = [];
+
+    /// <summary>
+    /// Enables fail-safe mode: every successful load also keeps a backup copy of the value for this many seconds,
+    /// and when the factory throws (database down, network error...) that last known value is returned instead of the exception.
+    /// If 0 or not specified, fail-safe is disabled for this method. Policies can tune or disable it at runtime.
+    /// </summary>
+    public int FailSafeMaxAgeSeconds { get; set; }
+
+    /// <summary>
+    /// Fail-safe only: when the factory takes longer than this many milliseconds and a backup value exists,
+    /// the backup is returned immediately while the factory keeps running in the background to refresh the entry.
+    /// If 0 or not specified, the caller always waits for the factory.
+    /// </summary>
+    public int FactorySoftTimeoutMs { get; set; }
+
+    /// <summary>
+    /// Fail-safe only: after the factory fails, how many seconds the backup value is served from the local (L1) cache
+    /// before the factory is retried, so a struggling backend is not hammered by every request.
+    /// If 0 or not specified, defaults to 30 seconds.
+    /// </summary>
+    public int FailSafeThrottleSeconds { get; set; }
 }

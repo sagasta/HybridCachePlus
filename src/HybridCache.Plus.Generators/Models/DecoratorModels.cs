@@ -1,16 +1,23 @@
 namespace HybridCache.Plus.Generators.Models;
 
-public sealed class EvictionActionModel(string keyTemplate, EquatableArray<string> tagTemplates)
+public sealed class EvictionActionModel(string keyTemplate, EquatableArray<string> tagTemplates, bool removesFailSafeBackup = false)
     : IEquatable<EvictionActionModel>
 {
     public string KeyTemplate { get; } = keyTemplate;
     public EquatableArray<string> TagTemplates { get; } = tagTemplates;
 
+    /// <summary>
+    /// The evicted key belongs to a fail-safe contract method, so its backup key must be removed as well.
+    /// </summary>
+    public bool RemovesFailSafeBackup { get; } = removesFailSafeBackup;
+
     public bool Equals(EvictionActionModel? other)
     {
         if (other is null) return false;
         if (ReferenceEquals(this, other)) return true;
-        return KeyTemplate == other.KeyTemplate && TagTemplates.Equals(other.TagTemplates);
+        return KeyTemplate == other.KeyTemplate &&
+               TagTemplates.Equals(other.TagTemplates) &&
+               RemovesFailSafeBackup == other.RemovesFailSafeBackup;
     }
 
     public override bool Equals(object? obj) => Equals(obj as EvictionActionModel);

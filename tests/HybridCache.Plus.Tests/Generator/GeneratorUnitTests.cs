@@ -453,4 +453,54 @@ public class GeneratorUnitTests
 
         Assert.Contains("CultureInfo.InvariantCulture, $\"tenant:{command.TenantId}\"", code);
     }
+
+    [Fact]
+    public void Generator_FailSafeContract_RoutesReadsThroughEngineAndRemovesBackups()
+    {
+        const string source = """
+        using System.Threading;
+        using System.Threading.Tasks;
+        using HybridCache.Plus;
+
+        namespace TestApp
+        {
+            public record PriceDto(string Sku, decimal Amount);
+
+            public interface IPriceWriter
+            {
+                Task SetPriceAsync(string sku, decimal amount);
+                void SetPrice(string sku, decimal amount);
+            }
+
+            [HybridCacheKeys]
+            public partial interface IPriceCache
+            {
+                [CacheTemplate("prices:{sku}", FailSafeMaxAgeSeconds = 3600, FactorySoftTimeoutMs = 250, FailSafeThrottleSeconds = 15)]
+                [InvalidatedBy(typeof(IPriceWriter), nameof(IPriceWriter.SetPriceAsync), nameof(IPriceWriter.SetPrice))]
+                ValueTask<PriceDto> GetPriceAsync(string sku);
+
+                [CacheTemplate("plain:{sku}")]
+                [InvalidatedBy(typeof(IPriceWriter), nameof(IPriceWriter.SetPriceAsync))]
+                ValueTask<PriceDto> GetPlainAsync(string sku);
+            }
+        }
+        """;
+
+        var (diagnostics, sources) = GeneratorTestHelper.RunGenerator(source);
+        Assert.Empty(diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error));
+
+        var extensions = sources.First(s => s.HintName.Contains("PriceCacheHybridCacheExtensions")).SourceText.ToString();
+        Assert.Contains("FailSafePolicy.FromSettings(3600, 250, 15)", extensions);
+        Assert.Contains("HybridCachePlusPolicyRegistry.ResolveFailSafe(cache", extensions);
+        Assert.Contains("HybridCachePlusFailSafe.GetOrCreateAsync<global::TestApp.PriceDto>(", extensions);
+        Assert.Contains("HybridCachePlusFailSafe.GetBackupKey(cacheKey)", extensions);
+
+        // Only the opted-in method pays for fail-safe.
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(extensions, "FailSafePolicy.FromSettings"));
+
+        var decorator = sources.First(s => s.HintName.Contains("PriceWriterCacheDecorator.g.cs")).SourceText.ToString();
+        Assert.Contains("HybridCachePlusFailSafe.GetBackupKey(__key0)", decorator);
+        Assert.DoesNotContain("GetBackupKey(__key1)", decorator);
+        Assert.Contains("HybridCachePlusFailSafe.GetBackupKey(string.Create(global::System.Globalization.CultureInfo.InvariantCulture, $\"prices:{sku}\"))", decorator);
+    }
 }

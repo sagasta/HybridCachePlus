@@ -137,7 +137,13 @@ public static class DecoratorEmitter
             // runs off any SynchronizationContext so a blocked caller thread cannot deadlock it.
             var keys = method.EvictionActions
                 .Where(e => !string.IsNullOrEmpty(e.KeyTemplate))
-                .Select(e => EmitterHelpers.InvariantInterpolation(e.KeyTemplate))
+                .SelectMany(e =>
+                {
+                    var key = EmitterHelpers.InvariantInterpolation(e.KeyTemplate);
+                    return e.RemovesFailSafeBackup
+                        ? new[] { key, $"global::HybridCache.Plus.Resilience.HybridCachePlusFailSafe.GetBackupKey({key})" }
+                        : new[] { key };
+                })
                 .ToList();
             var tags = method.EvictionActions
                 .SelectMany(e => e.TagTemplates)
@@ -186,7 +192,10 @@ public static class DecoratorEmitter
         sb.AppendLine($"{indent}    foreach (var key in keys)");
         sb.AppendLine($"{indent}    {{");
         sb.AppendLine($"{indent}        await _cache.RemoveAsync(key, global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
-        sb.AppendLine($"{indent}        global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction(key, \"DecoratorMutation\");");
+        sb.AppendLine($"{indent}        if (!key.EndsWith(global::HybridCache.Plus.Resilience.HybridCachePlusFailSafe.BackupKeySuffix, global::System.StringComparison.Ordinal))");
+        sb.AppendLine($"{indent}        {{");
+        sb.AppendLine($"{indent}            global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction(key, \"DecoratorMutation\");");
+        sb.AppendLine($"{indent}        }}");
         sb.AppendLine($"{indent}        if (_publisher != null)");
         sb.AppendLine($"{indent}        {{");
         sb.AppendLine($"{indent}            await _publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateKey(key), global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
@@ -214,12 +223,28 @@ public static class DecoratorEmitter
             {
                 var keyVar = $"__key{index++}";
                 sb.AppendLine($"{indent}var {keyVar} = {EmitterHelpers.InvariantInterpolation(eviction.KeyTemplate)};");
-                sb.AppendLine($"{indent}await _cache.RemoveAsync({keyVar}, global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
-                sb.AppendLine($"{indent}global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction({keyVar}, \"DecoratorMutation\");");
-                sb.AppendLine($"{indent}if (_publisher != null)");
-                sb.AppendLine($"{indent}{{");
-                sb.AppendLine($"{indent}    await _publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateKey({keyVar}), global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
-                sb.AppendLine($"{indent}}}");
+                if (eviction.RemovesFailSafeBackup)
+                {
+                    // The mutation made the cached value wrong, so its fail-safe backup goes too.
+                    var backupVar = $"{keyVar}Backup";
+                    sb.AppendLine($"{indent}var {backupVar} = global::HybridCache.Plus.Resilience.HybridCachePlusFailSafe.GetBackupKey({keyVar});");
+                    sb.AppendLine($"{indent}await _cache.RemoveAsync(new[] {{ {keyVar}, {backupVar} }}, global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
+                    sb.AppendLine($"{indent}global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction({keyVar}, \"DecoratorMutation\");");
+                    sb.AppendLine($"{indent}if (_publisher != null)");
+                    sb.AppendLine($"{indent}{{");
+                    sb.AppendLine($"{indent}    await _publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateKey({keyVar}), global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
+                    sb.AppendLine($"{indent}    await _publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateKey({backupVar}), global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
+                    sb.AppendLine($"{indent}}}");
+                }
+                else
+                {
+                    sb.AppendLine($"{indent}await _cache.RemoveAsync({keyVar}, global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
+                    sb.AppendLine($"{indent}global::HybridCache.Plus.Diagnostics.HybridCachePlusDiagnostics.RecordEviction({keyVar}, \"DecoratorMutation\");");
+                    sb.AppendLine($"{indent}if (_publisher != null)");
+                    sb.AppendLine($"{indent}{{");
+                    sb.AppendLine($"{indent}    await _publisher.PublishAsync(global::HybridCache.Plus.Backplane.BackplaneEvictionMessage.CreateKey({keyVar}), global::System.Threading.CancellationToken.None).ConfigureAwait(false);");
+                    sb.AppendLine($"{indent}}}");
+                }
             }
             foreach (var tag in eviction.TagTemplates)
             {

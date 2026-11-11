@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Caching.Hybrid;
 using HybridCache.Plus.Options;
+using HybridCache.Plus.Resilience;
 using HybridCache.Plus.Tenancy;
 
 namespace HybridCache.Plus.Policies;
@@ -91,6 +92,23 @@ public sealed class HybridCachePlusPolicyRegistry
     }
 
     /// <summary>
+    /// Resolves the effective <see cref="FailSafePolicy"/> using the registry associated with <paramref name="cache"/>,
+    /// or <see cref="Current"/> when the cache has none.
+    /// </summary>
+    public static FailSafePolicy ResolveFailSafe(
+        object? cache,
+        string policyName,
+        string? tenantId,
+        FailSafePolicy fallback)
+    {
+        var registry = cache != null && _cacheRegistries.TryGetValue(cache, out var associated)
+            ? associated
+            : _current;
+
+        return registry.ResolveFailSafePolicy(policyName, tenantId, fallback);
+    }
+
+    /// <summary>
     /// Replaces the policy options (e.g. after an <c>appsettings.json</c> change) and discards previously resolved entries.
     /// </summary>
     public void Reload(HybridCachePlusPolicyOptions options)
@@ -110,17 +128,7 @@ public sealed class HybridCachePlusPolicyRegistry
         ArgumentNullException.ThrowIfNull(fallback);
 
         var state = _state;
-
-        var effectiveTenantId = !string.IsNullOrEmpty(tenantId)
-            ? tenantId
-            : (_tenantAccessor ?? _ambientTenantAccessor)?.CurrentTenantId;
-
-        // Only tenants with configured overrides get their own entry; every other tenant shares the global
-        // resolution, so the memoization stays bounded no matter how many tenant identifiers are seen.
-        if (string.IsNullOrEmpty(effectiveTenantId) || !state.Options.Tenants.ContainsKey(effectiveTenantId))
-        {
-            effectiveTenantId = null;
-        }
+        var effectiveTenantId = GetConfiguredTenant(state, tenantId);
 
         // The fallback (compiled attribute TTLs) is part of the key: several methods may share a policy name
         // while declaring different defaults, and each must keep its own.
@@ -131,10 +139,85 @@ public sealed class HybridCachePlusPolicyRegistry
             : state.Resolved.GetOrAdd(key, ComputeOptions(state.Options, policyName, effectiveTenantId, fallback));
     }
 
+    /// <summary>
+    /// Resolves the effective <see cref="FailSafePolicy"/> for the specified policy and tenant from this registry instance.
+    /// Precedence: tenant policy, then global policy, then <paramref name="fallback"/> (the attribute settings).
+    /// </summary>
+    public FailSafePolicy ResolveFailSafePolicy(
+        string policyName,
+        string? tenantId,
+        FailSafePolicy fallback)
+    {
+        ArgumentNullException.ThrowIfNull(policyName);
+        ArgumentNullException.ThrowIfNull(fallback);
+
+        var state = _state;
+        var key = new FailSafeResolutionKey(policyName, GetConfiguredTenant(state, tenantId), fallback);
+
+        return state.ResolvedFailSafe.TryGetValue(key, out var resolved)
+            ? resolved
+            : state.ResolvedFailSafe.GetOrAdd(key, ComputeFailSafe(state.Options, key.PolicyName, key.TenantId, fallback));
+    }
+
+    /// <summary>
+    /// Returns the tenant whose overrides apply, or null when there is no tenant or it has no configured overrides.
+    /// Only configured tenants get their own memoized entries, so memory stays bounded no matter how many tenants are seen.
+    /// </summary>
+    private string? GetConfiguredTenant(State state, string? tenantId)
+    {
+        var effectiveTenantId = !string.IsNullOrEmpty(tenantId)
+            ? tenantId
+            : (_tenantAccessor ?? _ambientTenantAccessor)?.CurrentTenantId;
+
+        return string.IsNullOrEmpty(effectiveTenantId) || !state.Options.Tenants.ContainsKey(effectiveTenantId)
+            ? null
+            : effectiveTenantId;
+    }
+
     private sealed class State(HybridCachePlusPolicyOptions options)
     {
         public HybridCachePlusPolicyOptions Options { get; } = options;
         public ConcurrentDictionary<ResolutionKey, HybridCacheEntryOptions> Resolved { get; } = new();
+        public ConcurrentDictionary<FailSafeResolutionKey, FailSafePolicy> ResolvedFailSafe { get; } = new();
+    }
+
+    // The fallback is compared by reference: generated code passes one static instance per contract method.
+    private readonly record struct FailSafeResolutionKey(string PolicyName, string? TenantId, FailSafePolicy Fallback);
+
+    private static FailSafePolicy ComputeFailSafe(
+        HybridCachePlusPolicyOptions options,
+        string policyName,
+        string? tenantId,
+        FailSafePolicy fallback)
+    {
+        CachePolicyOptions? tenantPolicy = null;
+        if (tenantId != null && options.Tenants.TryGetValue(tenantId, out var tenantOptions))
+        {
+            tenantOptions.Policies.TryGetValue(policyName, out tenantPolicy);
+        }
+
+        options.Policies.TryGetValue(policyName, out var globalPolicy);
+
+        var maxAge = tenantPolicy?.FailSafeMaxAgeSeconds ?? globalPolicy?.FailSafeMaxAgeSeconds;
+        var softTimeout = tenantPolicy?.FactorySoftTimeoutMs ?? globalPolicy?.FactorySoftTimeoutMs;
+        var throttle = tenantPolicy?.FailSafeThrottleSeconds ?? globalPolicy?.FailSafeThrottleSeconds;
+
+        if (!maxAge.HasValue && !softTimeout.HasValue && !throttle.HasValue)
+        {
+            return fallback;
+        }
+
+        if (maxAge is <= 0 || (!maxAge.HasValue && !fallback.IsEnabled))
+        {
+            return FailSafePolicy.Disabled;
+        }
+
+        return new FailSafePolicy(
+            maxAge.HasValue ? TimeSpan.FromSeconds(maxAge.Value) : fallback.MaxAge,
+            softTimeout.HasValue
+                ? (softTimeout.Value > 0 ? TimeSpan.FromMilliseconds(softTimeout.Value) : null)
+                : fallback.FactorySoftTimeout,
+            throttle.HasValue && throttle.Value > 0 ? TimeSpan.FromSeconds(throttle.Value) : fallback.ThrottleDuration);
     }
 
     private readonly record struct ResolutionKey(

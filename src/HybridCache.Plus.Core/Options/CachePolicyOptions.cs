@@ -23,6 +23,22 @@ public sealed class CachePolicyOptions
     public HybridCacheEntryFlags? Flags { get; set; }
 
     /// <summary>
+    /// Fail-safe backup lifetime in seconds (0 disables fail-safe). Only applies to methods that opt in to fail-safe
+    /// through <c>[CacheTemplate(FailSafeMaxAgeSeconds = ...)]</c>.
+    /// </summary>
+    public int? FailSafeMaxAgeSeconds { get; set; }
+
+    /// <summary>
+    /// Fail-safe soft timeout for the factory in milliseconds (0 disables it).
+    /// </summary>
+    public int? FactorySoftTimeoutMs { get; set; }
+
+    /// <summary>
+    /// Seconds a fail-safe value is served locally after a factory failure before retrying (0 uses the 30 second default).
+    /// </summary>
+    public int? FailSafeThrottleSeconds { get; set; }
+
+    /// <summary>
     /// Creates a <see cref="HybridCacheEntryOptions"/> instance representing this policy, using fallback defaults when properties are null.
     /// </summary>
     public HybridCacheEntryOptions ToEntryOptions(HybridCacheEntryOptions fallback)

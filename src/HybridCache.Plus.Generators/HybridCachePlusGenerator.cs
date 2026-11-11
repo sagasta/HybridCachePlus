@@ -202,6 +202,9 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
 
             var localTtl = 0;
             var distributedTtl = 0;
+            var failSafeMaxAge = 0;
+            var factorySoftTimeout = 0;
+            var failSafeThrottle = 0;
             var tagsList = new List<string>();
             string? policyName = null;
 
@@ -218,6 +221,18 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                 else if (namedArg.Key == "DistributedTtlSeconds" && namedArg.Value.Value is int dt)
                 {
                     distributedTtl = dt;
+                }
+                else if (namedArg.Key == "FailSafeMaxAgeSeconds" && namedArg.Value.Value is int fs)
+                {
+                    failSafeMaxAge = fs;
+                }
+                else if (namedArg.Key == "FactorySoftTimeoutMs" && namedArg.Value.Value is int st)
+                {
+                    factorySoftTimeout = st;
+                }
+                else if (namedArg.Key == "FailSafeThrottleSeconds" && namedArg.Value.Value is int ft)
+                {
+                    failSafeThrottle = ft;
                 }
                 else if (namedArg.Key == "Tags" && namedArg.Value.Values != null)
                 {
@@ -424,7 +439,7 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                     // Resolve this contract's raw key/tag templates against every overload of the mutating method
                     foreach (var targetMethod in targetOverloads)
                     {
-                        var action = BuildEvictionAction(template, tagsList, targetMethod, methodSymbol.Name, diagnostics);
+                        var action = BuildEvictionAction(template, tagsList, targetMethod, methodSymbol.Name, failSafeMaxAge > 0, diagnostics);
                         if (action != null)
                         {
                             pendingEvictions.Add(new PendingEvictionModel(targetFullName, GetSignatureId(targetMethod), action));
@@ -443,7 +458,10 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
                 localTtl,
                 distributedTtl,
                 new EquatableArray<string>(resolvedTagsList),
-                new EquatableArray<ParameterModel>(parameters)));
+                new EquatableArray<ParameterModel>(parameters),
+                failSafeMaxAge,
+                factorySoftTimeout,
+                failSafeThrottle));
         }
 
         var interfaceModel = new CacheInterfaceModel(
@@ -470,6 +488,7 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
         List<string> tagTemplates,
         IMethodSymbol targetMethod,
         string cacheMethodName,
+        bool hasFailSafe,
         List<DiagnosticInfo> diagnostics)
     {
         var resolvedKey = string.Empty;
@@ -496,7 +515,7 @@ public sealed class HybridCachePlusGenerator : IIncrementalGenerator
         }
 
         return resolvedKey.Length > 0 || resolvedTags.Count > 0
-            ? new EvictionActionModel(resolvedKey, new EquatableArray<string>(resolvedTags))
+            ? new EvictionActionModel(resolvedKey, new EquatableArray<string>(resolvedTags), hasFailSafe && resolvedKey.Length > 0)
             : null;
     }
 

@@ -26,7 +26,8 @@ It completely eliminates magic strings in cache keys, automates cross-interface 
 5. **Configurable TTLs & Multi-Tenant Overrides**: Dynamically adjust or override TTLs at runtime via `appsettings.json` or Dependency Injection, with hierarchical per-tenant overrides (Free vs VIP tiers).
 6. **Multi-Instance Real-Time Backplane**: Synchronizes L1 invalidations across pods/replicas in real time via Redis Pub/Sub with automatic local echo cancellation.
 7. **Multi-Tenant L2 Redis Router**: Dynamically routes L2 cache operations to dedicated Redis instances per tenant while preserving HybridCache's native anti-stampede concurrency semaphores.
-8. **Native AOT Ready**: 100% free of heavy runtime reflection; fully compatible with trimming and ahead-of-time compilation.
+8. **Fail-Safe (stale-if-error)**: When the database is down or too slow, serve the last known good value instead of an exception, with throttled retries and a soft factory timeout.
+9. **Native AOT Ready**: 100% free of heavy runtime reflection; fully compatible with trimming and ahead-of-time compilation.
 
 ---
 
@@ -266,6 +267,48 @@ services.AddHybridCachePlus(builder =>
 
 ---
 
+## 🛟 Fail-Safe: Serve the Last Known Value When the Backend Fails
+
+When an entry has expired and the factory throws (database down, network timeout, upstream 5xx...), `HybridCache` propagates the exception and every request fails. With fail-safe enabled, HybridCache.Plus returns the **last known good value** instead:
+
+```csharp
+[CacheTemplate("tenants:{tenantId}:products:{productId}",
+    LocalTtlSeconds = 60,
+    DistributedTtlSeconds = 600,
+    FailSafeMaxAgeSeconds = 3600,   // keep a backup of the last good value for 1 hour
+    FactorySoftTimeoutMs = 500,     // optional: answer with the backup if the factory takes > 500 ms
+    FailSafeThrottleSeconds = 30)]  // optional: after a failure, reuse the backup for 30 s before retrying (default 30)
+ValueTask<ProductDetailDto> GetProductAsync(string tenantId, long productId);
+```
+
+No call site changes: the generated `GetProductAsync` extension handles it.
+
+- **How it works**: every successful load also stores a backup copy (`{key}|hcp:fs`) that lives for `FailSafeMaxAgeSeconds`, in the same L1/L2 layers and with the same tags as the entry. If the factory throws, the backup is returned instead of the exception.
+- **Throttled retries**: after a failure, the backup is kept in the local L1 cache for `FailSafeThrottleSeconds`, so a struggling backend isn't hit by every request. L2 is left alone, because another instance may already have stored a fresher value there.
+- **Soft timeout**: with `FactorySoftTimeoutMs`, a slow factory gets answered with the backup while it keeps running in the background and refreshes the entry when it finishes. Without a backup, the caller simply waits.
+- **Invalidation-aware**: data known to be wrong is never served. Generated decorators, `Evict...Async` methods, tag evictions and the Redis backplane remove the backup together with the entry.
+- **Cancellation is respected**: if the caller cancels, the call still throws `OperationCanceledException` rather than returning the backup.
+- **Pay only for what you use**: fail-safe is opted into per method in the attribute. Other methods generate exactly the same code as before.
+- **Runtime tuning**: policies can change or disable fail-safe per policy or per tenant (`0` disables it):
+
+```json
+{
+  "HybridCachePlus": {
+    "Policies": {
+      "CatalogProducts": { "FailSafeMaxAgeSeconds": 7200, "FactorySoftTimeoutMs": 300 }
+    },
+    "Tenants": {
+      "tenant_free": { "Policies": { "CatalogProducts": { "FailSafeMaxAgeSeconds": 0 } } }
+    }
+  }
+}
+```
+
+> [!NOTE]
+> The backup doubles the storage of opted-in entries (one extra copy in L1 and L2). Use it for reads where a slightly old value beats an error, such as catalogs, settings or prices shown on a page, not for balances or stock reservations.
+
+---
+
 ## 📊 Observability & Metrics (OpenTelemetry & .NET Aspire)
 
 HybridCache.Plus includes built-in, production-grade observability powered by **`System.Diagnostics.Metrics`** and **`ActivitySource`**. It seamlessly integrates with OpenTelemetry, Prometheus, Grafana, and the **.NET Aspire Dashboard**.
@@ -279,6 +322,7 @@ HybridCache.Plus includes built-in, production-grade observability powered by **
 | **`hybridcache_plus.evictions`** | Counter (`{evictions}`) | Cache entries purged locally or remotely. | `eviction.reason` (`DecoratorMutation`, `Backplane`, `ManualEvict`), `cache.tenant` |
 | **`hybridcache_plus.backplane.published`** | Counter (`{messages}`) | Eviction notices published across Redis Pub/Sub to invalidate remote pods. | `cache.tenant` |
 | **`hybridcache_plus.backplane.received`** | Counter (`{messages}`) | Remote eviction notices received from other pods to purge local L1. | `cache.tenant` |
+| **`hybridcache_plus.failsafe.activations`** | Counter (`{activations}`) | Backup values served because the factory failed or exceeded its soft timeout. The current `Activity` also gets a `cache.failsafe` tag. | `failsafe.reason` (`FactoryError`, `FactoryTimeout`), `cache.policy`, `cache.tenant` |
 | **`hybridcache_plus.duration`** | Histogram (`ms`) | Execution latency of cache operations in milliseconds. | `cache.operation`, `cache.policy`, `cache.tenant` |
 
 ### OpenTelemetry Setup
