@@ -11,6 +11,16 @@ public class ProductRepository : IProductRepository
 
     public static void ResetQueryCount() => Interlocked.Exchange(ref _queryCount, 0);
 
+    /// <summary>
+    /// Simulates a database outage on this node: reads throw until it is turned off.
+    /// </summary>
+    public static volatile bool SimulateOutage;
+
+    /// <summary>
+    /// Simulates a slow database on this node: reads wait this many milliseconds first.
+    /// </summary>
+    public static volatile int SimulatedLatencyMs;
+
     public ProductRepository(IConfiguration configuration)
     {
         var dbPath = configuration["DATABASE_PATH"] ?? Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "playground_products.db");
@@ -43,6 +53,16 @@ public class ProductRepository : IProductRepository
     public async Task<ProductDto?> GetByIdAsync(string tenantId, long productId, CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref _queryCount);
+
+        if (SimulatedLatencyMs > 0)
+        {
+            await Task.Delay(SimulatedLatencyMs, cancellationToken);
+        }
+
+        if (SimulateOutage)
+        {
+            throw new InvalidOperationException("Simulated database outage");
+        }
 
         using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);

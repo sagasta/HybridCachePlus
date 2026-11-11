@@ -316,4 +316,168 @@ public class DistributedCacheE2ETests : IClassFixture<AspireFixture>
         // Verify that Node 2 reloaded both items from DB
         Assert.True(afterNode2 > beforeNode2, $"Expected Node 2 to reload items from DB because Tag was evicted. Before: {beforeNode2}, After: {afterNode2}");
     }
+
+    // ---------------------------------------------------------------------
+    // Fail-safe scenarios. Outage, latency and expiration are simulated per node.
+    // ---------------------------------------------------------------------
+
+    private static async Task SetOutageAsync(HttpClient node, bool enabled) =>
+        (await node.PostAsync($"/api/system/db-outage?enabled={enabled.ToString().ToLowerInvariant()}", null)).EnsureSuccessStatusCode();
+
+    private static async Task SetLatencyAsync(HttpClient node, int ms) =>
+        (await node.PostAsync($"/api/system/db-latency?ms={ms}", null)).EnsureSuccessStatusCode();
+
+    private static async Task ExpireAsync(HttpClient node, string tenant, long productId) =>
+        (await node.PostAsync($"/api/system/expire/{tenant}/{productId}", null)).EnsureSuccessStatusCode();
+
+    private static async Task<int> DbQueriesAsync(HttpClient node) =>
+        (await node.GetFromJsonAsync<JsonObject>("/api/system/status"))?["totalDbQueries"]?.GetValue<int>() ?? 0;
+
+    [Fact]
+    public async Task Test09_FailSafe_DatabaseOutage_ServesLastKnownValue()
+    {
+        const long productId = 901L;
+        var update = await _f.Node1.PutAsJsonAsync($"/api/products/tenant_alpha/{productId}", new { Name = "Fail-safe Lamp", Price = 19.99m });
+        update.EnsureSuccessStatusCode();
+        await _f.Node1.GetAsync($"/api/products/tenant_alpha/{productId}"); // loads entry + backup
+
+        try
+        {
+            await SetOutageAsync(_f.Node1, true);
+            await ExpireAsync(_f.Node1, "tenant_alpha", productId);
+
+            var res = await _f.Node1.GetFromJsonAsync<JsonObject>($"/api/products/tenant_alpha/{productId}");
+            Assert.NotNull(res);
+            Assert.Contains("FAIL-SAFE", res["source"]?.ToString());
+            Assert.Equal("Fail-safe Lamp", res["product"]?["name"]?.ToString());
+
+            // Throttle: the next reads reuse the backup without hitting the failing database again.
+            var before = await DbQueriesAsync(_f.Node1);
+            for (var i = 0; i < 5; i++)
+            {
+                var again = await _f.Node1.GetFromJsonAsync<JsonObject>($"/api/products/tenant_alpha/{productId}");
+                Assert.Equal("Fail-safe Lamp", again?["product"]?["name"]?.ToString());
+            }
+            Assert.Equal(before, await DbQueriesAsync(_f.Node1));
+        }
+        finally
+        {
+            await SetOutageAsync(_f.Node1, false);
+        }
+    }
+
+    [Fact]
+    public async Task Test10_FailSafe_OutageWithoutBackup_Returns503()
+    {
+        try
+        {
+            await SetOutageAsync(_f.Node1, true);
+
+            var res = await _f.Node1.GetAsync("/api/products/tenant_alpha/902");
+            Assert.Equal(System.Net.HttpStatusCode.ServiceUnavailable, res.StatusCode);
+        }
+        finally
+        {
+            await SetOutageAsync(_f.Node1, false);
+        }
+    }
+
+    [Fact]
+    public async Task Test11_FailSafe_BackupInRedisL2_IsServedByAnotherNode()
+    {
+        const long productId = 903L;
+        var update = await _f.Node1.PutAsJsonAsync($"/api/products/tenant_alpha/{productId}", new { Name = "Shared Backup Chair", Price = 89m });
+        update.EnsureSuccessStatusCode();
+
+        // Only Node 1 loads it: the backup reaches Node 2 exclusively through the tenant's Redis L2.
+        await _f.Node1.GetAsync($"/api/products/tenant_alpha/{productId}");
+
+        var backupKeys = _f.RedisAlpha.GetServer(_f.RedisAlpha.GetEndPoints().First())
+            .Keys(pattern: $"*tenants:tenant_alpha:products:{productId}|hcp:fs*")
+            .ToList();
+        Assert.NotEmpty(backupKeys);
+
+        try
+        {
+            await SetOutageAsync(_f.Node2, true);
+            await ExpireAsync(_f.Node2, "tenant_alpha", productId);
+
+            var res = await _f.Node2.GetFromJsonAsync<JsonObject>($"/api/products/tenant_alpha/{productId}");
+            Assert.NotNull(res);
+            Assert.Contains("FAIL-SAFE", res["source"]?.ToString());
+            Assert.Equal("Shared Backup Chair", res["product"]?["name"]?.ToString());
+        }
+        finally
+        {
+            await SetOutageAsync(_f.Node2, false);
+        }
+    }
+
+    [Fact]
+    public async Task Test12_FailSafe_MutationOnOneNode_RemovesBackupEverywhere()
+    {
+        const long productId = 904L;
+
+        // Both nodes hold the entry and its backup (L1 on each node, L2 shared).
+        await _f.Node1.GetAsync($"/api/products/tenant_alpha/{productId}");
+        await _f.Node2.GetAsync($"/api/products/tenant_alpha/{productId}");
+
+        // Node 1 mutates: the old value is now known to be wrong.
+        var update = await _f.Node1.PutAsJsonAsync($"/api/products/tenant_alpha/{productId}", new { Name = "Changed Desk", Price = 250m });
+        update.EnsureSuccessStatusCode();
+        await Task.Delay(500); // backplane propagation
+
+        try
+        {
+            await SetOutageAsync(_f.Node2, true);
+
+            // Node 2 must not resurrect the pre-update value from its L1 backup or from L2.
+            var res = await _f.Node2.GetAsync($"/api/products/tenant_alpha/{productId}");
+            Assert.Equal(System.Net.HttpStatusCode.ServiceUnavailable, res.StatusCode);
+        }
+        finally
+        {
+            await SetOutageAsync(_f.Node2, false);
+        }
+    }
+
+    [Fact]
+    public async Task Test13_FailSafe_SlowDatabase_ServesBackupAndRefreshesInBackground()
+    {
+        const long productId = 905L;
+        var update = await _f.Node1.PutAsJsonAsync($"/api/products/tenant_alpha/{productId}", new { Name = "Slow Sofa v1", Price = 500m });
+        update.EnsureSuccessStatusCode();
+        await _f.Node1.GetAsync($"/api/products/tenant_alpha/{productId}");
+
+        try
+        {
+            await SetLatencyAsync(_f.Node1, 3000);
+            await ExpireAsync(_f.Node1, "tenant_alpha", productId);
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var res = await _f.Node1.GetFromJsonAsync<JsonObject>($"/api/products/tenant_alpha/{productId}");
+            sw.Stop();
+
+            Assert.NotNull(res);
+            Assert.Contains("FAIL-SAFE", res["source"]?.ToString());
+            Assert.Equal("Slow Sofa v1", res["product"]?["name"]?.ToString());
+            Assert.True(sw.ElapsedMilliseconds < 2500, $"Expected the soft timeout (1 s) to answer early, took {sw.ElapsedMilliseconds} ms");
+
+            // The background load (~3 s) stores a fresh entry: once it is done, reads are fast hits
+            // even though the database is still slow.
+            await Task.Delay(3500);
+            var before = await DbQueriesAsync(_f.Node1);
+            sw.Restart();
+            var later = await _f.Node1.GetFromJsonAsync<JsonObject>($"/api/products/tenant_alpha/{productId}");
+            sw.Stop();
+
+            Assert.Contains("HIT", later?["source"]?.ToString());
+            Assert.Equal(before, await DbQueriesAsync(_f.Node1));
+            Assert.True(sw.ElapsedMilliseconds < 500, $"Expected a cached hit after the background refresh, took {sw.ElapsedMilliseconds} ms");
+        }
+        finally
+        {
+            await SetLatencyAsync(_f.Node1, 0);
+        }
+    }
 }

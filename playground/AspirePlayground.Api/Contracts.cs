@@ -27,7 +27,10 @@ public partial interface ICatalogCache
         PolicyName = "CatalogProducts",
         LocalTtlSeconds = 120,
         DistributedTtlSeconds = 600,
-        Tags = ["tenant:{tenantId}"])]
+        Tags = ["tenant:{tenantId}"],
+        // Fail-safe: if SQLite fails or takes > 1 s, serve the last known product (kept for 1 h).
+        FailSafeMaxAgeSeconds = 3600,
+        FactorySoftTimeoutMs = 1000)]
     [InvalidatedBy<IProductRepository>(
         nameof(IProductRepository.UpdateProductAsync),
         nameof(IProductRepository.DeleteProductAsync))]
